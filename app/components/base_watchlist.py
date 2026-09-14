@@ -4,6 +4,8 @@ Renders consolidation base screening with 4 lifecycle filter boxes, candidate da
 2-column 6-metric grid, summary lines, structured checklists, and historical base setups.
 Chart visualization is removed from the section; _create_base_figure is retained for test compatibility.
 """
+import re
+import textwrap
 from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
@@ -14,6 +16,15 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from storage.repository import MarketRadarRepository
+
+def render_html_safe(html_str: str):
+    """Render HTML safely without markdown code block indentation issues."""
+    clean_html = textwrap.dedent(html_str).strip()
+    if hasattr(st, "html"):
+        st.html(clean_html)
+    else:
+        st.markdown(clean_html, unsafe_allow_html=True)
+
 
 STATE_LABELS = {
     "tight": ("Nền co chặt", "#EDF3EC", "#346538", "Co hẹp biến động & Volume cạn"),
@@ -216,25 +227,61 @@ def render_base_metrics_grid(base_info: Dict[str, Any]):
 
 
 def render_base_watchlist(
-    base_records: List[Dict[str, Any]],
+    base_records: Optional[List[Dict[str, Any]]] = None,
     as_of: str = "",
-    repo: Optional[MarketRadarRepository] = None
+    repo: Optional[MarketRadarRepository] = None,
+    snapshot_id: Optional[int] = None,
+    candidates: Optional[List[Dict[str, Any]]] = None
 ):
     """
-    Render the 'Đang Xây Nền' section as candidate data cards with 4 lifecycle filter boxes.
-    Removes chart visualization entirely from the section.
+    Render the 'Nền Giá & Bứt Phá' (Base Building & Breakout) section.
+    Supports two data scopes:
+    1. 'Trong snapshot hiện tại' (point-in-time snapshot records)
+    2. 'Tất cả các đợt đến phiên chọn' (latest record per base setup including ended/played_out)
+    Always clearly distinguishes symbol counts from setup counts.
     """
-    st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">🧱 Đang Xây Nền (Base Building Watchlist)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">🧱 Nền Giá & Bứt Phá (Base Building & Breakout)</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="editorial-sub" style="margin-bottom: 16px;">'
         'Nhận diện các cổ phiếu tích lũy trong nền giá hẹp trước và sau điểm bứt phá. '
-        'Theo dõi vòng đời nền qua 4 giai đoạn với 6 chỉ số định lượng trọng yếu; không sử dụng biểu đồ.'
+        'Theo dõi vòng đời nền qua 4 giai đoạn với 6 chỉ số định lượng trọng yếu; phân biệt rõ số mã với số đợt nền.'
         '</div>',
         unsafe_allow_html=True
     )
 
-    if not base_records:
-        st.info("ℹ️ Chưa tính dữ liệu nền cho snapshot này (phiên trước khi tính năng 'Đang xây nền' được kích hoạt hoặc không có mã nào thỏa mãn tiêu chí).")
+    # Dual Data Scopes Selection
+    scope_options = [
+        "Trong snapshot hiện tại",
+        "Tất cả các đợt đến phiên chọn (gồm đã kết thúc)"
+    ]
+    scope_selected = st.radio(
+        "Phạm vi dữ liệu nền giá:",
+        options=scope_options,
+        index=0,
+        horizontal=True,
+        key="base_data_scope_radio",
+        help="Trong snapshot: chỉ lấy các bản ghi nền thuộc phiên snapshot. Tất cả các đợt: lấy trạng thái mới nhất của mọi đợt nền tính đến phiên này kể cả đã hoàn tất."
+    )
+
+    # Resolve records based on selected scope
+    effective_records = base_records or []
+    if repo:
+        try:
+            if scope_selected == "Trong snapshot hiện tại":
+                if snapshot_id is not None:
+                    effective_records = repo.get_base_snapshots(snapshot_id=snapshot_id, as_of=as_of)
+                else:
+                    effective_records = repo.get_base_snapshots(as_of=as_of)
+            else:
+                if hasattr(repo, "get_latest_base_snapshots"):
+                    effective_records = repo.get_latest_base_snapshots(as_of=as_of)
+                else:
+                    effective_records = repo.get_base_snapshots(as_of=as_of)
+        except Exception:
+            effective_records = base_records or []
+
+    if not effective_records:
+        st.info("ℹ️ Chưa có dữ liệu nền giá cho phạm vi này (phiên trước khi kích hoạt bộ nhận diện hoặc không có mã nào thỏa mãn tiêu chí).")
         return
 
     # 1. Universal Filter Controls (Search & Sector)
@@ -244,11 +291,11 @@ def render_base_watchlist(
         search_sym = st.text_input("Tìm kiếm mã hoặc công ty:", placeholder="Nhập AAPL, MSFT...", key="base_search_input").strip().lower()
 
     with f_col2:
-        all_sectors = ["Tất cả các ngành"] + sorted(list(set(b.get("sector") for b in base_records if b.get("sector"))))
+        all_sectors = ["Tất cả các ngành"] + sorted(list(set(b.get("sector") for b in effective_records if b.get("sector"))))
         selected_sector = st.selectbox("Lọc theo ngành:", all_sectors, index=0, key="base_sector_filter")
 
     # Scope records by search and sector first so box counts reflect filters
-    scoped_records = base_records
+    scoped_records = effective_records
     if search_sym:
         scoped_records = [
             b for b in scoped_records
@@ -257,19 +304,24 @@ def render_base_watchlist(
     if selected_sector != "Tất cả các ngành":
         scoped_records = [b for b in scoped_records if b.get("sector") == selected_sector]
 
-    # Calculate counts for 4 lifecycle filter boxes (explicitly stating setup counts)
-    cnt_forming = sum(1 for b in scoped_records if get_base_lifecycle(b) == "forming")
-    cnt_fresh = sum(1 for b in scoped_records if get_base_lifecycle(b) == "fresh_breakout")
-    cnt_climbing = sum(1 for b in scoped_records if get_base_lifecycle(b) == "climbing")
-    cnt_played_out = sum(1 for b in scoped_records if get_base_lifecycle(b) == "played_out")
+    # Calculate distinct symbol counts and setup counts for 4 lifecycle filter boxes
+    def _get_counts(records, phase):
+        matched = [b for b in records if get_base_lifecycle(b) == phase]
+        distinct_symbols = len(set(b.get("symbol", "") for b in matched))
+        return distinct_symbols, len(matched)
 
-    # 2. 4 Lifecycle Filter Boxes
+    sym_forming, cnt_forming = _get_counts(scoped_records, "forming")
+    sym_fresh, cnt_fresh = _get_counts(scoped_records, "fresh_breakout")
+    sym_climbing, cnt_climbing = _get_counts(scoped_records, "climbing")
+    sym_played_out, cnt_played_out = _get_counts(scoped_records, "played_out")
+
+    # 2. 4 Lifecycle Filter Boxes with explicit symbol and setup counts
     lifecycle_options = ["forming", "fresh_breakout", "climbing", "played_out"]
     lifecycle_labels = {
-        "forming": f"🧱 Đang hình thành ({cnt_forming} setup)",
-        "fresh_breakout": f"🚀 Mới bứt phá ({cnt_fresh} setup)",
-        "climbing": f"📈 Tiếp tục tăng ({cnt_climbing} setup)",
-        "played_out": f"🏁 Hoàn tất chu kỳ ({cnt_played_out} setup)"
+        "forming": f"🧱 Đang hình thành ({sym_forming} mã / {cnt_forming} đợt)",
+        "fresh_breakout": f"🚀 Mới bứt phá ({sym_fresh} mã / {cnt_fresh} đợt)",
+        "climbing": f"📈 Tiếp tục tăng ({sym_climbing} mã / {cnt_climbing} đợt)",
+        "played_out": f"🏁 Hoàn tất chu kỳ ({sym_played_out} mã / {cnt_played_out} đợt)"
     }
 
     selected_lifecycle = st.segmented_control(
@@ -348,7 +400,7 @@ def render_base_watchlist(
             for p in range(1, total_pages + 1)
         ]
         chosen_page_label = st.selectbox(
-            f"Trang hiển thị ({len(unique_symbols)} mã / {len(display_records)} setup):",
+            f"Trang hiển thị ({len(unique_symbols)} mã / {len(display_records)} đợt nền):",
             page_options,
             key=f"page_base_cards_{selected_lifecycle}"
         )
@@ -358,13 +410,36 @@ def render_base_watchlist(
     else:
         page_symbols = unique_symbols
 
+    st.markdown(f"<div style='font-size: 13px; color: #787774; margin-bottom: 12px;'>Đang hiển thị: <b>{len(page_symbols)}</b> / <b>{len(unique_symbols)}</b> mã (tổng <b>{len(display_records)}</b> đợt nền) &middot; Nhóm <b>{lifecycle_labels[selected_lifecycle]}</b></div>", unsafe_allow_html=True)
+
     # 5. Render Data Cards
+    candidate_map = {c["symbol"]: c for c in candidates} if candidates else {}
+    if not candidate_map and repo and snapshot_id:
+        try:
+            cands_list = repo.get_candidates_by_snapshot(snapshot_id)
+            candidate_map = {c["symbol"]: c for c in cands_list}
+        except Exception:
+            candidate_map = {}
+
     for idx, s in enumerate(page_symbols):
         setups = grouped_by_symbol[s]
         if len(setups) == 1:
-            _render_individual_base_card(setups[0], as_of=as_of, repo=repo, key_suffix=f"{selected_lifecycle}_{idx}")
+            _render_individual_base_card(
+                setups[0],
+                as_of=as_of,
+                repo=repo,
+                key_suffix=f"{selected_lifecycle}_{idx}",
+                candidate_map=candidate_map
+            )
         else:
-            _render_grouped_base_card(s, setups, as_of=as_of, repo=repo, key_suffix=f"{selected_lifecycle}_{idx}")
+            _render_grouped_base_card(
+                s,
+                setups,
+                as_of=as_of,
+                repo=repo,
+                key_suffix=f"{selected_lifecycle}_{idx}",
+                candidate_map=candidate_map
+            )
 
 
 def _get_badge_html(lifecycle: str, state_key: str, bo_bars: int = 0) -> str:
@@ -392,33 +467,174 @@ def _get_badge_html(lifecycle: str, state_key: str, bo_bars: int = 0) -> str:
         return '<span style="font-size: 12px; font-weight: 600; background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; padding: 3px 10px; border-radius: 9999px;">Hỏng trước breakout</span>'
 
 
-def _render_individual_base_card(
-    b: Dict[str, Any],
+def _render_card_fa_column(
+    sym: str,
+    fa_flags: Optional[Dict[str, Any]],
+    as_of: str = "",
+    repo: Optional[MarketRadarRepository] = None
+):
+    """Render standardized fundamental (FA) column for stock cards."""
+    st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Bối cảnh Doanh nghiệp & FA</div>', unsafe_allow_html=True)
+    if (not fa_flags or not isinstance(fa_flags, dict) or not fa_flags.get("has_data")) and repo is not None:
+        try:
+            from analytics.company_fa import evaluate_fa_flags
+            fa_df = repo.get_fundamentals([sym])
+            if not fa_df.empty:
+                fa_raw = fa_df.iloc[0].to_dict()
+                ref_d = as_of.split()[0] if as_of else None
+                fa_flags = evaluate_fa_flags(sym, fa_raw, ref_date=ref_d)
+        except Exception:
+            pass
+
+    if fa_flags and isinstance(fa_flags, dict) and fa_flags.get("has_data"):
+        days_earn = fa_flags.get("days_to_earnings")
+        next_earn = fa_flags.get("next_earnings_date")
+
+        # 1. Dedicated earnings schedule & risk tag
+        if days_earn is not None and next_earn and next_earn != "Chưa xác minh":
+            if 0 <= days_earn <= 14:
+                earn_chip = f"<span style='background: #FDEBEC; color: #9F2F2D; border: 1px solid #F8D7DA; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 12px;'>⚠️ Còn {days_earn} ngày (Rủi ro biến động)</span>"
+            else:
+                earn_chip = f"<span style='background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 1px 6px; border-radius: 4px; font-weight: 500; font-size: 12px;'>Còn {days_earn} ngày (An toàn swing)</span>"
+            st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; margin-bottom: 6px;'><b>BCTC tới:</b> {next_earn} &middot; {earn_chip}</div>", unsafe_allow_html=True)
+        elif next_earn and next_earn != "Chưa xác minh":
+            st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; margin-bottom: 6px;'><b>BCTC dự kiến:</b> {next_earn}</div>", unsafe_allow_html=True)
+
+        # 2. Render flags without duplicate earnings or duplicate MRQ dates
+        flags_list = fa_flags.get("flags", [])
+        warning_chips = []
+        bullet_flags = []
+        for f in flags_list:
+            if any(kw in f for kw in ["Kỳ công bố Earnings", "RỦI RO BÁO CÁO TÀI CHÍNH", "Earnings: Lịch chưa"]):
+                continue
+            if "Cảnh báo" in f or "⚠️" in f:
+                clean_f = f.replace("⚠️", "").replace("Cảnh báo:", "").strip()
+                clean_f = re.sub(r',\s*Kỳ kết thúc\s*\([^)]*\):?\s*[\d\-]+', '', clean_f)
+                clean_f = re.sub(r',\s*nguồn\s*[^)]+', '', clean_f)
+                warning_chips.append(clean_f)
+            else:
+                bullet_flags.append(f)
+
+        if warning_chips:
+            chips_html = "".join([
+                f"<span style='font-size: 12px; color: #9F2F2D; background: #FDEBEC; border: 1px solid #F8D7DA; padding: 2px 8px; border-radius: 4px; font-weight: 500; display: inline-block; margin: 2px 4px 4px 0;'>⚠️ {w}</span>"
+                for w in warning_chips
+            ])
+            st.markdown(f"<div style='margin-bottom: 6px;'>{chips_html}</div>", unsafe_allow_html=True)
+
+        for bf in bullet_flags:
+            st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; {bf}</div>", unsafe_allow_html=True)
+
+        if not warning_chips and not bullet_flags and not next_earn:
+            st.markdown("<div style='font-size: 13.5px; color: #787774;'>&bull; Chưa ghi nhận bất thường cơ bản.</div>", unsafe_allow_html=True)
+
+        # 3. Clean single metadata row
+        period_end = fa_flags.get("period_end")
+        fiscal_period = fa_flags.get("fiscal_period")
+        src_str = fa_flags.get("source", "Yahoo Finance (Số liệu tổng hợp / Aggregate)")
+        metrics = fa_flags.get("metrics", {})
+        p_margin = metrics.get('profit_margin_str', 'N/A')
+
+        period_label = period_end if (period_end and period_end != "Chưa xác minh") else fiscal_period
+        meta_parts = []
+        if period_label and period_label not in ("Chưa xác minh kỳ", "N/A"):
+            meta_parts.append(f"Kỳ MRQ: <b>{period_label}</b>")
+        if p_margin and p_margin != "N/A":
+            meta_parts.append(f"Biên ròng: <b>{p_margin}</b>")
+        meta_parts.append(f"Nguồn: {src_str}")
+
+        st.markdown(f"<div style='font-size: 12px; color: #787774; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #EAEAEA;'>{' &middot; '.join(meta_parts)}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='font-size: 13.5px; color: #787774;'>&bull; Chưa có dữ liệu FA trong cơ sở dữ liệu local (chờ chu kỳ cập nhật tiếp theo).</div>", unsafe_allow_html=True)
+
+
+def _render_card_action_column(
+    sym: str,
+    cand_obj: Dict[str, Any],
+    fa_flags: Optional[Dict[str, Any]],
     as_of: str = "",
     repo: Optional[MarketRadarRepository] = None,
     key_suffix: str = ""
 ):
-    """Render single base candidate data card."""
+    """Render standardized action buttons column."""
+    st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Thao tác</div>', unsafe_allow_html=True)
+    card_btn_key = f"btn_base_card_detail_{sym}_{key_suffix}" if key_suffix else f"btn_base_card_detail_{sym}"
+    if st.button(f"Chi tiết {sym} →", key=card_btn_key, type="primary", use_container_width=True):
+        from app.components.setup_detail import show_setup_detail_dialog
+        show_setup_detail_dialog(cand_obj, as_of=as_of, repo=repo, key_suffix=f"base_dlg_{sym}_{key_suffix}")
+
+    tv_url = f"https://www.tradingview.com/chart/?symbol={sym}&interval=D"
+    st.link_button(f"Chart {sym} ↗", tv_url, use_container_width=True)
+
+    sec_url = (fa_flags.get("sec_filing_url") if isinstance(fa_flags, dict) else None) or f"https://www.sec.gov/edgar/browse/?CIK={sym}"
+    st.link_button("Tra cứu SEC ↗", sec_url, use_container_width=True)
+
+
+def _render_individual_base_card(
+    b: Dict[str, Any],
+    as_of: str = "",
+    repo: Optional[MarketRadarRepository] = None,
+    key_suffix: str = "",
+    candidate_map: Optional[Dict[str, Dict[str, Any]]] = None
+):
+    """Render single base candidate data card synchronized with app design."""
     sym = b.get("symbol", "")
     company = b.get("company_name", sym)
     sector = b.get("sector", "")
     sub_ind = b.get("sub_industry", "")
     price = b.get("close_price", 0.0)
-    data_date = b.get("as_of", as_of)
     p1d = b.get("perf_1d")
+    upper = b.get("upper")
+    lower = b.get("lower")
+    width = b.get("width_pct")
+    now_vs_pivot = b.get("now_vs_pivot_pct")
+    rs = b.get("rs_rating")
+    f52 = b.get("from_52w_high_pct")
 
     if p1d is not None:
-        p1d_color = "#346538" if p1d >= 0 else "#9F2F2D"
-        p1d_html = f' &middot; <span>Thay đổi: <b style="color: {p1d_color};">{p1d:+.2f}%</b></span>'
+        color_1d = "#346538" if p1d >= 0 else "#9F2F2D"
+        p1d_str = f"{p1d:+.2f}%"
     else:
-        p1d_html = ' &middot; <span>Thay đổi: <span style="color: #787774;">—</span></span>'
+        color_1d = "#787774"
+        p1d_str = "—"
 
+    # Leader badge
+    cand_match = candidate_map.get(sym) if candidate_map else None
+    is_oneil = bool(rs is not None and rs >= 80)
+    if cand_match and cand_match.get("is_oneil_leader"):
+        is_oneil = True
+    oneil_badge_html = '<span style="font-size: 11.5px; font-weight: 600; background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 2px 8px; border-radius: 9999px; letter-spacing: 0.04em; text-transform: uppercase; margin-left: 6px;">Leader</span>' if is_oneil else ''
+
+    # Setup badge
+    setup_label = "NỀN GIÁ" if not b.get("breakout_date") else "BREAKOUT NỀN"
+    setup_badge_html = f'<span style="font-size: 11.5px; font-weight: 600; background: #E1F3FE; color: #1F6C9F; border: 1px solid #BAE6FD; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.03em; text-transform: uppercase; margin-left: 6px;">{setup_label}</span>'
+
+    # Lifecycle & status badges
     state_key = b.get("state", "none")
     lifecycle = b.get("lifecycle_phase") or get_base_lifecycle(b)
     bo_bars = b.get("breakout_bar_count", 0)
     badges_html = _get_badge_html(lifecycle, state_key, bo_bars)
 
     sub_ind_html = f'<span style="font-size: 12px; background: #F7F6F3; color: #787774; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 6px;">{sub_ind}</span>' if sub_ind else ''
+    sector_html = f'<span style="font-size: 12px; background: #F7F6F3; color: #555555; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 8px;">{sector}</span>' if sector else ''
+
+    rs_str = f"{rs}" if rs is not None else "—"
+    rs_color = "#346538" if (rs is not None and rs >= 80) else "#111111"
+
+    pivot_str = f"${upper:.2f}" if upper is not None else "N/A"
+    lower_str = f"${lower:.2f}" if lower is not None else "N/A"
+    width_str = f"{width:.1f}%" if width is not None else "N/A"
+
+    if now_vs_pivot is not None:
+        nvp_color = "#346538" if now_vs_pivot >= 0 else "#9F2F2D"
+        nvp_str = f"{now_vs_pivot:+.1f}%"
+    else:
+        nvp_color = "#787774"
+        nvp_str = "N/A"
+
+    f52_str = f"-{f52:.1f}%" if f52 is not None else "N/A"
+
+    # End reason banner if ended
     end_reason = b.get("end_reason")
     ended_at = b.get("ended_at")
     if end_reason:
@@ -427,40 +643,144 @@ def _render_individual_base_card(
     else:
         end_reason_html = ''
 
-    # Card header HTML
-    card_header_html = f"""
-    <div style="border: 1px solid #EAEAEA; border-radius: 6px; padding: 16px 20px; margin-bottom: 8px; background: #FFFFFF;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <div>
-                <span style="font-family: 'Geist Mono', monospace; font-size: 20px; font-weight: 700; color: #111111;">{sym}</span>
-                <span style="font-size: 14.5px; color: #787774; margin-left: 10px; font-weight: 500;">{company}</span>
-                <span style="font-size: 12px; background: #F7F6F3; color: #787774; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 8px;">{sector}</span>
-                {sub_ind_html}
-            </div>
-            <div>
-                {badges_html}
-            </div>
-        </div>
-        <div style="font-family: 'Geist Mono', monospace; font-size: 14px; color: #787774; border-top: 1px solid #F7F6F3; padding-top: 6px; margin-top: 4px;">
-            <span style="color: #2F3437; font-weight: 600;">Đóng cửa: ${price:.2f}</span>{p1d_html} &middot; 
-            <span>Ngày: {data_date}</span>
-        </div>
-        <div style="font-size: 13px; color: #374151; font-weight: 500; margin-top: 8px; background: #F9FAFB; padding: 6px 10px; border-radius: 4px; border: 1px solid #F3F4F6;">
-            {format_base_summary_line(b)}
-        </div>
-        {end_reason_html}
-    </div>
-    """
-    if hasattr(st, "html"):
-        st.html(card_header_html)
-    else:
-        st.markdown(card_header_html, unsafe_allow_html=True)
+    # Base state label
+    b_st_key = b.get("state", "forming")
+    b_label = STATE_LABELS.get(b_st_key, (b_st_key,))[0]
+    summary_line = format_base_summary_line(b)
 
-    # 6 Core Metrics Block
-    render_base_metrics_grid(b)
+    with st.container(border=True):
+        header_html = (
+            f'<div style="margin-bottom: 12px;">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">'
+            f'<div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">'
+            f'<span style="font-family: \'Geist Mono\', monospace; font-size: 20px; font-weight: 700; color: #111111;">{sym}</span>'
+            f'<span style="font-size: 15px; color: #787774; margin-left: 6px; font-weight: 500;">{company}</span>'
+            f'{sector_html}'
+            f'{sub_ind_html}'
+            f'{oneil_badge_html}'
+            f'{setup_badge_html}'
+            f'</div>'
+            f'<div style="display: flex; align-items: center; gap: 10px;">'
+            f'<span style="font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774;">RS: <b style="color: {rs_color};">{rs_str}</b></span>'
+            f'{badges_html}'
+            f'</div>'
+            f'</div>'
+            f'<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774; background: #F9F9F8; border: 1px solid #EAEAEA; border-radius: 6px; padding: 8px 14px;">'
+            f'<span><span style="color: #2F3437; font-weight: 600;">Giá: ${price:.2f}</span> (1D: <span style="color: {color_1d}; font-weight: 600;">{p1d_str}</span>)</span>'
+            f'<span style="color: #D1D5DB;">|</span>'
+            f'<span>Pivot: <b style="color: #111111;">{pivot_str}</b></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Biên dưới: <b style="color: #111111;">{lower_str}</b></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Cách Pivot: <span style="color: {nvp_color}; font-weight: 600;">{nvp_str}</span></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Độ rộng: <b style="color: #2F3437;">{width_str}</b></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Đỉnh 52W: <b style="color: #2F3437;">{f52_str}</b></span>'
+            f'</div>'
+            f'</div>'
+        )
+        render_html_safe(header_html)
 
-    # Technical Details Expander
-    _render_technical_details_expander(b, sym=sym, as_of=as_of, repo=repo, key_suffix=key_suffix)
+        # Base banner (matching candidate cards base section)
+        base_badge_html = f"""
+        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                <span style="font-size: 13px; font-weight: 600; color: #1E293B;">🧱 Thiết Lập Nền Giá (Base Building):</span>
+                <span style="font-size: 11.5px; background: #EFF6FF; color: #1D4ED8; padding: 1px 6px; border-radius: 4px; font-weight: 600;">{b_label}</span>
+            </div>
+            <div style="font-size: 12.5px; color: #64748B;">{summary_line}</div>
+            {end_reason_html}
+        </div>
+        """
+        render_html_safe(base_badge_html)
+
+        # 6 Core Metrics Grid
+        render_base_metrics_grid(b)
+
+        # Build candidate object for detail dialog
+        cand_obj = dict(cand_match) if cand_match else {
+            "symbol": sym,
+            "company_name": company,
+            "sector": sector,
+            "sub_industry": sub_ind,
+            "close_price": price,
+            "perf_1d": p1d or 0.0,
+            "perf_5d": b.get("perf_5d", 0.0),
+            "perf_20d": b.get("perf_20d", 0.0),
+            "trigger_price": upper,
+            "invalidation_price": lower,
+            "status": "confirmed" if lifecycle in ("fresh_breakout", "breakout_confirmed") else ("setup" if state_key in ("tight", "forming") else "watchlist"),
+            "score": float(rs or 0.0),
+            "setup_type": setup_label,
+            "group_type": "base_building",
+            "is_oneil_leader": is_oneil,
+            "atr14": b.get("atr14"),
+            "atr_pct": b.get("atr_pct"),
+            "tv_url": f"https://www.tradingview.com/chart/?symbol={sym}&interval=D",
+            "fa_flags": b.get("fa_flags"),
+            "base_info": b
+        }
+        cand_obj["base_info"] = b
+
+        # 3-Column Bento Section
+        col_ta, col_fa, col_action = st.columns([4.6, 4.6, 2.8])
+
+        with col_ta:
+            st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Bằng chứng Kỹ thuật (TA)</div>', unsafe_allow_html=True)
+            win_start = b.get("window_start", "")
+            win_end = b.get("window_end", "")
+            if win_start and win_end:
+                st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; Cửa sổ 20 phiên: <b>{win_start}</b> &rarr; <b>{win_end}</b>.</div>", unsafe_allow_html=True)
+
+            st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; Cấu trúc: Pivot <b>{pivot_str}</b> &middot; Biên dưới <b>{lower_str}</b> &middot; Độ sâu <b>{width_str}</b>.</div>", unsafe_allow_html=True)
+
+            t_ctx = b.get("trend_context")
+            ma50 = b.get("ma50")
+            ma200 = b.get("ma200")
+            if t_ctx or ma50 or ma200:
+                ctx_parts = []
+                if t_ctx:
+                    ctx_parts.append(f"Bối cảnh: <b>{t_ctx}</b>")
+                if ma50:
+                    ctx_parts.append(f"MA50: <b>${ma50:.2f}</b>")
+                if ma200:
+                    ctx_parts.append(f"MA200: <b>${ma200:.2f}</b>")
+                st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; {' &middot; '.join(ctx_parts)}.</div>", unsafe_allow_html=True)
+
+            bo_date = b.get("breakout_date")
+            bo_price = b.get("breakout_price")
+            bo_count = b.get("breakout_bar_count", 0)
+            if bo_date and bo_price:
+                st.markdown(f"<div style='font-size: 13.5px; color: #065F46; line-height: 1.55; margin-bottom: 3px;'>&bull; ⚡ Breakout xác nhận ngày <b>{bo_date}</b> tại <b>${bo_price:.2f}</b> (Phiên thứ {bo_count}).</div>", unsafe_allow_html=True)
+            elif now_vs_pivot is not None:
+                st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; Tích lũy dưới Pivot: cách đỉnh nền <b style='color: {nvp_color};'>{nvp_str}</b>.</div>", unsafe_allow_html=True)
+
+            checks = b.get("checks", [])
+            if checks:
+                pass_cnt = sum(1 for chk in checks if chk.get("pass"))
+                st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; Checklist: Đạt <b>{pass_cnt}/{len(checks)}</b> tiêu chí cấu trúc nền.</div>", unsafe_allow_html=True)
+
+            if is_oneil:
+                st.markdown(f"<div style='font-size: 13px; color: #166534; background: #EDF3EC; border: 1px solid #D1E5D0; padding: 4px 8px; border-radius: 4px; margin-top: 5px;'>★ O'Neil Leader: Top 20% sức mạnh giá RS ({rs_str})</div>", unsafe_allow_html=True)
+
+        with col_fa:
+            fa_data = b.get("fa_flags") or (cand_match.get("fa_flags") if cand_match else None)
+            _render_card_fa_column(sym=sym, fa_flags=fa_data, as_of=as_of, repo=repo)
+
+        with col_action:
+            fa_data = b.get("fa_flags") or (cand_match.get("fa_flags") if cand_match else None)
+            _render_card_action_column(
+                sym=sym,
+                cand_obj=cand_obj,
+                fa_flags=fa_data,
+                as_of=as_of,
+                repo=repo,
+                key_suffix=key_suffix
+            )
+
+        # Technical details & history expander inside the card
+        _render_technical_details_expander(b, sym=sym, as_of=as_of, repo=repo, key_suffix=key_suffix)
 
 
 def _render_grouped_base_card(
@@ -468,7 +788,8 @@ def _render_grouped_base_card(
     setups: List[Dict[str, Any]],
     as_of: str = "",
     repo: Optional[MarketRadarRepository] = None,
-    key_suffix: str = ""
+    key_suffix: str = "",
+    candidate_map: Optional[Dict[str, Dict[str, Any]]] = None
 ):
     """Render a unified card for a symbol with multiple base setups grouped together."""
     first_b = setups[0]
@@ -478,68 +799,134 @@ def _render_grouped_base_card(
     price = first_b.get("close_price", 0.0)
     data_date = first_b.get("as_of", as_of)
     p1d = first_b.get("perf_1d")
+    rs = first_b.get("rs_rating")
 
     if p1d is not None:
         p1d_color = "#346538" if p1d >= 0 else "#9F2F2D"
-        p1d_html = f' &middot; <span>Thay đổi: <b style="color: {p1d_color};">{p1d:+.2f}%</b></span>'
+        p1d_str = f"{p1d:+.2f}%"
     else:
-        p1d_html = ' &middot; <span>Thay đổi: <span style="color: #787774;">—</span></span>'
+        p1d_color = "#787774"
+        p1d_str = "—"
+
+    cand_match = candidate_map.get(sym) if candidate_map else None
+    is_oneil = bool(rs is not None and rs >= 80)
+    if cand_match and cand_match.get("is_oneil_leader"):
+        is_oneil = True
+    oneil_badge_html = '<span style="font-size: 11.5px; font-weight: 600; background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 2px 8px; border-radius: 9999px; letter-spacing: 0.04em; text-transform: uppercase; margin-left: 6px;">Leader</span>' if is_oneil else ''
 
     sub_ind_html = f'<span style="font-size: 12px; background: #F7F6F3; color: #787774; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 6px;">{sub_ind}</span>' if sub_ind else ''
+    sector_html = f'<span style="font-size: 12px; background: #F7F6F3; color: #555555; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 8px;">{sector}</span>' if sector else ''
 
-    header_html = f"""
-    <div style="border: 1px solid #EAEAEA; border-radius: 6px; padding: 16px 20px; margin-bottom: 8px; background: #FFFFFF;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <div>
-                <span style="font-family: 'Geist Mono', monospace; font-size: 20px; font-weight: 700; color: #111111;">{sym}</span>
-                <span style="font-size: 14.5px; color: #787774; margin-left: 10px; font-weight: 500;">{company}</span>
-                <span style="font-size: 12px; background: #F7F6F3; color: #787774; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 8px;">{sector}</span>
-                {sub_ind_html}
+    rs_str = f"{rs}" if rs is not None else "—"
+    rs_color = "#346538" if (rs is not None and rs >= 80) else "#111111"
+
+    with st.container(border=True):
+        header_html = (
+            f'<div style="margin-bottom: 12px;">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">'
+            f'<div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">'
+            f'<span style="font-family: \'Geist Mono\', monospace; font-size: 20px; font-weight: 700; color: #111111;">{sym}</span>'
+            f'<span style="font-size: 15px; color: #787774; margin-left: 6px; font-weight: 500;">{company}</span>'
+            f'{sector_html}'
+            f'{sub_ind_html}'
+            f'{oneil_badge_html}'
+            f'</div>'
+            f'<div style="display: flex; align-items: center; gap: 10px;">'
+            f'<span style="font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774;">RS: <b style="color: {rs_color};">{rs_str}</b></span>'
+            f'<span style="font-size: 12px; font-weight: 600; background: #EEF2FF; color: #4F46E5; border: 1px solid #C7D2FE; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.04em;">{len(setups)} setups</span>'
+            f'</div>'
+            f'</div>'
+            f'<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774; background: #F9F9F8; border: 1px solid #EAEAEA; border-radius: 6px; padding: 8px 14px;">'
+            f'<span><span style="color: #2F3437; font-weight: 600;">Giá: ${price:.2f}</span> (1D: <span style="color: {p1d_color}; font-weight: 600;">{p1d_str}</span>)</span>'
+            f'<span style="color: #D1D5DB;">|</span>'
+            f'<span>Số đợt nền: <b style="color: #111111;">{len(setups)}</b></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Phiên dữ liệu: <code style="font-family: \'Geist Mono\', monospace;">{data_date}</code></span>'
+            f'</div>'
+            f'</div>'
+        )
+        render_html_safe(header_html)
+
+        for s_idx, b in enumerate(setups):
+            b_id = b.get("base_id", f"Setup #{s_idx + 1}")
+            lifecycle = b.get("lifecycle_phase") or get_base_lifecycle(b)
+            st_key = b.get("state", "none")
+            bo_bars = b.get("breakout_bar_count", 0)
+
+            badge_html = _get_badge_html(lifecycle, st_key, bo_bars)
+            end_reason = b.get("end_reason")
+            ended_at = b.get("ended_at")
+            end_str = f"Ngày {ended_at} &middot; " if ended_at else ""
+            end_html = f'<div style="font-size: 12px; color: #991B1B; background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 4px; padding: 5px 8px; margin-top: 6px;"><b>Đã kết thúc:</b> {end_str}<b>Nguyên nhân:</b> {end_reason}</div>' if end_reason else ''
+
+            sub_card_html = f"""
+            <div style="border-left: 3px solid #3B82F6; background: #F8FAFC; padding: 8px 12px; margin: 8px 0 4px 0; border-radius: 0 4px 4px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-family: 'Geist Mono', monospace; font-size: 12px; font-weight: 600; color: #334155;">Đợt nền: {b_id}</span>
+                    <div>{badge_html}</div>
+                </div>
+                <div style="font-size: 12.5px; color: #374151; font-weight: 500;">{format_base_summary_line(b)}</div>
+                {end_html}
             </div>
-            <div>
-                <span style="font-size: 12px; font-weight: 600; background: #EEF2FF; color: #4F46E5; border: 1px solid #C7D2FE; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.04em;">{len(setups)} setups</span>
-            </div>
-        </div>
-        <div style="font-family: 'Geist Mono', monospace; font-size: 14px; color: #787774; border-top: 1px solid #F7F6F3; padding-top: 6px; margin-top: 4px;">
-            <span style="color: #2F3437; font-weight: 600;">Đóng cửa: ${price:.2f}</span>{p1d_html} &middot; 
-            <span>Ngày: {data_date}</span>
-        </div>
-    </div>
-    """
-    if hasattr(st, "html"):
-        st.html(header_html)
-    else:
-        st.markdown(header_html, unsafe_allow_html=True)
+            """
+            render_html_safe(sub_card_html)
+            render_base_metrics_grid(b)
 
-    for s_idx, b in enumerate(setups):
-        b_id = b.get("base_id", f"Setup #{s_idx + 1}")
-        lifecycle = b.get("lifecycle_phase") or get_base_lifecycle(b)
-        st_key = b.get("state", "none")
-        bo_bars = b.get("breakout_bar_count", 0)
+        # Build candidate object for detail dialog
+        cand_obj = dict(cand_match) if cand_match else {
+            "symbol": sym,
+            "company_name": company,
+            "sector": sector,
+            "sub_industry": sub_ind,
+            "close_price": price,
+            "perf_1d": p1d or 0.0,
+            "perf_5d": first_b.get("perf_5d", 0.0),
+            "perf_20d": first_b.get("perf_20d", 0.0),
+            "trigger_price": first_b.get("upper"),
+            "invalidation_price": first_b.get("lower"),
+            "status": "setup",
+            "score": float(rs or 0.0),
+            "setup_type": "Nền giá",
+            "group_type": "base_building",
+            "is_oneil_leader": is_oneil,
+            "atr14": first_b.get("atr14"),
+            "atr_pct": first_b.get("atr_pct"),
+            "tv_url": f"https://www.tradingview.com/chart/?symbol={sym}&interval=D",
+            "fa_flags": first_b.get("fa_flags"),
+            "base_info": first_b
+        }
+        cand_obj["base_info"] = first_b
 
-        badge_html = _get_badge_html(lifecycle, st_key, bo_bars)
-        end_reason = b.get("end_reason")
-        ended_at = b.get("ended_at")
-        end_str = f"Ngày {ended_at} &middot; " if ended_at else ""
-        end_html = f'<div style="font-size: 12px; color: #991B1B; background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 4px; padding: 5px 8px; margin-top: 6px;"><b>Đã kết thúc:</b> {end_str}<b>Nguyên nhân:</b> {end_reason}</div>' if end_reason else ''
+        # 3-Column Bento Section
+        col_ta, col_fa, col_action = st.columns([4.6, 4.6, 2.8])
 
-        sub_card_html = f"""
-        <div style="border-left: 3px solid #3B82F6; background: #F8FAFC; padding: 8px 12px; margin: 8px 0 4px 0; border-radius: 0 4px 4px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                <span style="font-family: 'Geist Mono', monospace; font-size: 12px; font-weight: 600; color: #334155;">Đợt nền: {b_id}</span>
-                <div>{badge_html}</div>
-            </div>
-            <div style="font-size: 12.5px; color: #374151; font-weight: 500;">{format_base_summary_line(b)}</div>
-            {end_html}
-        </div>
-        """
-        if hasattr(st, "html"):
-            st.html(sub_card_html)
-        else:
-            st.markdown(sub_card_html, unsafe_allow_html=True)
+        with col_ta:
+            st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Bằng chứng Kỹ thuật (TA)</div>', unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; Tổng số đợt nền được ghi nhận: <b>{len(setups)} đợt</b>.</div>", unsafe_allow_html=True)
+            for s_i, sb in enumerate(setups[:3]):
+                p_val = sb.get("upper")
+                p_str = f"${p_val:.2f}" if p_val is not None else "N/A"
+                st.markdown(f"<div style='font-size: 13px; color: #555555; margin-bottom: 2px;'>- Đợt {sb.get('base_id', f'#{s_i+1}')}: Pivot {p_str}, sâu {sb.get('width_pct', 0):.1f}% ({sb.get('lifecycle_phase', 'forming')})</div>", unsafe_allow_html=True)
+            if is_oneil:
+                st.markdown(f"<div style='font-size: 13px; color: #166534; background: #EDF3EC; border: 1px solid #D1E5D0; padding: 4px 8px; border-radius: 4px; margin-top: 5px;'>★ O'Neil Leader: Top 20% sức mạnh giá RS ({rs_str})</div>", unsafe_allow_html=True)
 
-        render_base_metrics_grid(b)
-        _render_technical_details_expander(b, sym=sym, as_of=as_of, repo=repo, key_suffix=f"{key_suffix}_{s_idx}")
+        with col_fa:
+            fa_data = first_b.get("fa_flags") or (cand_match.get("fa_flags") if cand_match else None)
+            _render_card_fa_column(sym=sym, fa_flags=fa_data, as_of=as_of, repo=repo)
+
+        with col_action:
+            fa_data = first_b.get("fa_flags") or (cand_match.get("fa_flags") if cand_match else None)
+            _render_card_action_column(
+                sym=sym,
+                cand_obj=cand_obj,
+                fa_flags=fa_data,
+                as_of=as_of,
+                repo=repo,
+                key_suffix=key_suffix
+            )
+
+        # Technical details & history expander inside the card
+        _render_technical_details_expander(first_b, sym=sym, as_of=as_of, repo=repo, key_suffix=key_suffix)
 
 
 def _render_technical_details_expander(

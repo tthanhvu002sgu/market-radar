@@ -119,22 +119,24 @@ Xem file `.env.example`:
         ├──> [analytics/signal_events]       ──> [Deduplicated Cross-Session Events]
         ├──> [analytics/signal_outcomes]     ──> [Streaks, Forward Returns 5/10/20D, MFE/MAE]
         └──> [analytics/company_fa]          ──> [FA Flags & Earnings Status]
-                     │
-                     ▼
-               [app/main.py (Streamlit - Kiến trúc 3 Trụ Cột / 2 Cấp điều hướng)]
-                       ├──> [Pillar 1: 🎯 Hôm Nay & Ứng Viên]
-                       │       ├──> [01 Hôm Nay (Today Dashboard & Events)]
-                       │       ├──> [02 Ứng Viên & Setup Detail (TradingView + In-tab CSV Export)]
-                       │       ├──> [03 Đang Xây Nền 🧱 (Base Watchlist, Checklist, Shaded Region Chart)]
-                       │       └──> [04 Lịch Báo Cáo Tài Chính (Earnings Calendar)]
-                       ├──> [Pillar 2: 🌐 Bản Đồ Thị Trường & Ngành]
-                       │       ├──> [01 Bức Tranh Thị Trường (3 Major Indices + Contrast Bars + SPY vs RSP)]
-                       │       ├──> [02 11 Ngành GICS (Sector Rotation & Drill-down)]
-                       │       └──> [03 Ma Trận 127 Nhóm Ngành O'Neil (CANSLIM Percentile Matrix)]
-                       └──> [Pillar 3: 📊 Đo Lường & Kiểm Toán]
-                               ├──> [01 Hiệu Quả Tín Hiệu (Alpha Audit & Forward Outcomes)]
-                               ├──> [02 So Sánh Snapshot (Delta History)]
-                               └──> [03 Kiểm Toán Dữ Liệu & Vận Hành (0đ, Coverage, Quality)]
+                      │
+                      ▼
+                [app/main.py (Streamlit - Điều hướng 1 Cấp / 10 Trang theo 5 Nhóm)]
+                        ├──> [THEO DÕI]
+                        │       ├──> [📌 Tổng Hợp Phiên (Daily Synthesis & Events)]
+                        │       └──> [📅 Lịch BCTC (Earnings Calendar đa chế độ)]
+                        ├──> [TÌM CƠ HỘI]
+                        │       ├──> [🎯 Ứng Viên (Bảng Rút Gọn / Thẻ, 4 Chiến Thuật + Mâu Thuẫn)]
+                        │       └──> [🧱 Nền Giá & Bứt Phá (Base Building & Breakout - 2 Phạm Vi)]
+                        ├──> [BỐI CẢNH]
+                        │       ├──> [🌐 Thị Trường (3 Chỉ Số, Thanh Bar Độ Rộng, SPY vs RSP)]
+                        │       ├──> [📊 Ngành (Luân Chuyển 11 GICS & Sức Khỏe Nội Bộ)]
+                        │       └──> [🗺️ Nhóm Ngành (Ma Trận 127 Sub-Industries O'Neil Heatmap)]
+                        ├──> [ĐÁNH GIÁ]
+                        │       ├──> [📈 Chất Lượng Tín Hiệu (Alpha Audit & Forward Outcomes)]
+                        │       └──> [🔄 Thay Đổi Giữa Phiên (Snapshot Diff & Delta)]
+                        └──> [HỆ THỐNG]
+                                └──> [⚙️ Dữ Liệu & Vận Hành (0đ, Coverage, Quality Audit & Update Pipeline)]
 ```
 
 ### Cấu trúc thư mục
@@ -209,14 +211,14 @@ market radar/
 
 | Component / Module | Path | Vai trò | Phụ thuộc chính |
 |---|---|---|---|
-| **App Entry Point** | `app/main.py` | Giao diện chính Streamlit kiến trúc 3 Trụ cột, điều hướng 2 cấp, quản lý snapshot | `streamlit`, `storage/repository` |
+| **App Entry Point** | `app/main.py` | Giao diện chính Streamlit: điều hướng sidebar 1 cấp (10 trang theo 5 nhóm), top header 1 dòng gọn gàng, expander thông tin phiên, router trực tiếp | `streamlit`, `storage/repository` |
 | **Major Indices UI** | `app/components/index_charts.py` | Cụm 3 thẻ biểu đồ nến S&P 500, NASDAQ, DOW kèm vạch tham chiếu, huy hiệu giá vàng, Relative Volume | `plotly`, `yfinance`, `streamlit` |
 | **Earnings Calendar UI**| `app/components/earnings_calendar.py` | Trạm làm việc Lịch BCTC: Lịch tuần (BMO/AMC), bảng tương tác, bộ lọc S&P 500 và Ứng viên Radar | `streamlit`, `pandas`, `yfinance_provider` |
-| **Today Dashboard UI**| `app/components/today_dashboard.py` | Bàn làm việc Hôm nay: 4 nhóm sự kiện, unread badge, action bar ổn định chiều cao | `streamlit`, `setup_detail` |
-| **Setup Detail UI** | `app/components/setup_detail.py` | Modal chi tiết setup 3 tab nội bộ (Kỹ thuật/Chart PIT, Nến Nhật/FA, Checklist/Xuất CSV), loại bỏ cuộn dài | `plotly`, `streamlit`, `repository` |
-| **Base Watchlist UI** | `app/components/base_watchlist.py` | Màn hình Đang Xây Nền: Thẻ dữ liệu 6 chỉ số định lượng, 4 bộ lọc vòng đời (Forming, Fresh breakouts, Climbing, Played out), loại bỏ biểu đồ nến, chia sẻ khối chỉ số sang Candidate Cards | `streamlit`, `repository` |
+| **Today Dashboard UI**| `app/components/today_dashboard.py` | Bàn làm việc Hôm nay: 4 nhóm sự kiện, phím tắt liên kết Lịch BCTC/Diff/Ngành/Setup modal, unread badge | `streamlit`, `setup_detail` |
+| **Setup Detail UI** | `app/components/setup_detail.py` | Modal dialog chi tiết setup 3 tab tinh gọn (Kỹ thuật/Mẫu nến, Doanh nghiệp/BCTC, Checklist điều kiện), helper `show_setup_detail_dialog` | `plotly`, `streamlit`, `repository` |
+| **Base Watchlist UI** | `app/components/base_watchlist.py` | Màn hình Nền Giá & Bứt Phá: Bộ chọn 2 phạm vi dữ liệu (trong snapshot vs tất cả các đợt), thẻ 6 chỉ số, phân biệt mã vs đợt nền | `streamlit`, `repository` |
 | **Signal Quality UI** | `app/components/signal_performance.py` | Màn hình đo chất lượng bộ lọc scanner: 5/10/20d returns, SPY alpha, MFE/MAE, Candlestick Edge Audit | `streamlit`, `signal_outcomes` |
-| **Candidate Cards UI** | `app/components/candidate_cards.py` | Thẻ ứng viên 4 nhóm, cờ O'Neil Leader, nút xuất CSV tại chỗ, bảng số liệu định dạng chuẩn | `streamlit`, `setup_detail` |
+| **Candidate Cards UI** | `app/components/candidate_cards.py` | Trạm ứng viên ưu tiên Bảng Rút Gọn, 4 chiến thuật + Tín hiệu mâu thuẫn, tải kép CSV (đang lọc vs toàn bộ), so sánh side-by-side, banner quay lại | `streamlit`, `setup_detail` |
 | **Market Metrics UI** | `app/components/metrics_cards.py` | Thẻ thanh bar đối chiếu tỉ lệ xanh/đỏ (A/D, H/L, SMA50, SMA200, Bull/Bear), phân kỳ SPY vs RSP, time-series | `plotly`, `streamlit`, `index_charts` |
 | **Sector Table UI** | `app/components/sector_table.py` | Bảng xếp hạng 11 ngành GICS, biểu đồ thanh RS, drill-down nhóm ngành con | `plotly`, `streamlit`, `pandas` |
 | **Industry Heatmap UI**| `app/components/industry_heatmap.py` | Bảng nhiệt ma trận xếp hạng 127 nhóm ngành, điểm 1-99, stock pills link TV | `streamlit`, `pandas` |
@@ -241,6 +243,45 @@ market radar/
 ---
 
 ## 4. Các task đã làm
+
+### [2026-09-14] Tái Cấu Trúc Toàn Diện Trải Nghiệm Giao Diện Người Dùng (UI Reorganization) `(EXE)`
+- **Mode / Type / Action / Lane:** REFACTOR / UI / EXECUTE / n/a
+- **Tóm tắt:** Tái cấu trúc toàn diện kiến trúc điều hướng và giao diện Market Radar theo tiêu chuẩn *Utilitarian Minimalism*: chuyển đổi từ điều hướng ngang 2 tầng (3 trụ cột x 3-4 sub-tabs) sang hệ thống điều hướng 1 cấp trên Sidebar (10 trang phân theo 5 nhóm chức năng), tối ưu hóa Top Header 1 dòng tiết kiệm tối đa không gian hiển thị, hoàn thiện trạm làm việc Ứng viên (ưu tiên Bảng Rút Gọn, đổi tên Tín Hiệu Mâu Thuẫn, chuẩn hóa tải kép CSV và so sánh side-by-side), hỗ trợ 2 phạm vi dữ liệu Nền giá, tinh gọn Modal Setup Detail thành 3 tab và thiết lập mạng lưới liên kết chéo (cross-navigation) trực tiếp giữa Ngành / Nhóm ngành / Sự kiện / Ứng viên.
+- **Thay đổi chính:**
+  1. **Điều Hướng 1 Cấp Trên Sidebar (`app/main.py`):**
+     - Thay thế các thanh chọn ngang 2 cấp (Pillars & Sub-tabs) gây nhầm lẫn bằng hệ thống menu 1 cấp trực quan tại Sidebar, phân loại rành mạch theo 5 nhóm mục tiêu:
+       - **THEO DÕI:** `📌 Tổng hợp phiên`, `📅 Lịch BCTC`
+       - **TÌM CƠ HỘI:** `🎯 Ứng viên`, `🧱 Nền giá & bứt phá`
+       - **BỐI CẢNH:** `🌐 Thị trường`, `📊 Ngành`, `🗺️ Nhóm ngành`
+       - **ĐÁNH GIÁ:** `📈 Chất lượng tín hiệu`, `🔄 Thay đổi giữa phiên`
+       - **HỆ THỐNG:** `⚙️ Dữ liệu & vận hành`
+     - Loại bỏ các trang chuyển tiếp trung gian không cần thiết; mỗi nút trên sidebar đưa người dùng trực tiếp đến trạm làm việc chuyên biệt tương ứng.
+  2. **Top Header Gọn Gàng & Hộp Thông Tin Phiên Mở Rộng (`app/main.py`):**
+     - Thu gọn thanh tiêu đề trên cùng thành 1 dòng duy nhất: Tên trang hiện tại, ngày snapshot `as_of`, huy hiệu trạng thái và đồng hồ kép ET / ICT kèm trạng thái NYSE và phiên mục tiêu.
+     - Di chuyển các khối thẻ thông tin vận hành dài dòng (chi tiết đồng hồ, độ tươi dữ liệu, tỷ lệ bao phủ đồng phiên, lịch sử 1Y, phạm vi 503 mã Large Cap, nguyên tắc 0đ) vào expander `ℹ️ Thông tin phiên, đồng hồ thị trường & phạm vi dữ liệu`, giải phóng toàn bộ không gian phía trên để nội dung chính hiển thị ngay lập tức mà không cần cuộn.
+  3. **Hoàn Thiện Trạm Làm Việc Ứng Viên (`app/components/candidate_cards.py`):**
+     - Đặt chế độ **Bảng Rút Gọn** (Table view) làm mặc định (`index=0`), giúp người dùng quét nhanh toàn bộ cơ hội trước khi mở thẻ chi tiết.
+     - Đổi tên nhóm `watchlist` thành **Tín Hiệu Mâu Thuẫn (Contradiction)** với mô tả chuẩn hóa rõ ràng.
+     - Tách biệt hoàn toàn `base_building` thành trang riêng, bổ sung huy hiệu nền giá và nút liên kết trực tiếp trên thẻ ứng viên.
+     - Chuẩn hóa tính năng tải kép CSV với danh sách cột đồng bộ (`export_cols`): "Xuất kết quả đang lọc" vs "Xuất toàn bộ phiên này".
+     - Thu hẹp phạm vi so sánh trực diện (Side-by-Side Comparison) theo đúng tập ứng viên đang lọc hiện tại.
+     - Bổ sung thanh thông báo điều hướng chéo (`← Quay lại` / `✕ Xóa bộ lọc`) khi người dùng nhảy tới từ trang Ngành hoặc Nhóm ngành.
+  4. **Bộ Chọn Phạm Vi Dữ Liệu Nền Giá & Phân Biệt Số Mã / Đợt Nền (`app/components/base_watchlist.py`):**
+     - Bổ sung bộ chọn phạm vi dữ liệu 2 chế độ: "Trong snapshot hiện tại" (point-in-time theo phiên) vs "Tất cả các đợt đến phiên chọn (gồm đã kết thúc)" (toàn bộ lịch sử tích lũy).
+     - Phân biệt rõ ràng giữa số lượng mã cổ phiếu duy nhất và tổng số đợt nền (`{len(symbols)} mã / {len(records)} đợt`) trên thanh tiêu đề và 4 hộp vòng đời.
+  5. **Tinh Gọn Modal Chi Tiết Setup Thành 3 Tab (`app/components/setup_detail.py`):**
+     - Tái cấu trúc thành 3 tab nội bộ trực quan, mạch lạc:
+       - Tab 1: **📈 Kỹ Thuật & Mẫu Nến** (Biểu đồ, phân tích đa khung, các mức giá, nhận diện nến).
+       - Tab 2: **🏢 Doanh Nghiệp & BCTC** (Bối cảnh cơ bản, tăng trưởng, kỳ BCTC, xuất xứ Yahoo Finance, link SEC EDGAR).
+       - Tab 3: **✅ Checklist Điều Kiện** (Bảng kiểm đạt/chưa đạt/thiếu dữ liệu, thông số ATR/MA/Vol, xuất CSV).
+     - Xây dựng helper `show_setup_detail_dialog` hỗ trợ mở popup modal lớn trên cả Bảng rút gọn, Thẻ ứng viên và Dòng sự kiện Hôm nay, có cơ chế fallback mượt mà khi chạy headless.
+  6. **Mạng Lưới Liên Kết Chéo (Cross-Navigation Ecosystem):**
+     - Tại `app/components/sector_table.py`: Bổ sung nút "Xem Ứng viên {ngành} 🎯" và bộ điều hướng theo phân ngành con để tự động lọc ứng viên.
+     - Tại `app/components/industry_heatmap.py`: Bổ sung selectbox và nút chuyển nhanh đến trang Ứng viên lọc theo Sub-industry đã chọn.
+     - Tại `app/components/today_dashboard.py`: Bổ sung các nút hành động trực tiếp tại từng sự kiện và thanh phím tắt trên đầu để chuyển nhanh tới Lịch BCTC, So sánh biến động giữa các phiên, Bức tranh thị trường, hoặc mở modal Setup chi tiết.
+  7. **Kiểm Thử Toàn Diện (191/191 tests pass 100%):**
+     - Xây dựng file kiểm thử mới `tests/test_ui_reorganization.py` bao phủ 5 khía cạnh cốt lõi: cấu trúc danh mục sidebar 10 trang, chuẩn hóa cột xuất CSV kép, tách nhóm mâu thuẫn, kiểm thử 2 phạm vi dữ liệu nền giá và helper modal dialog.
+     - Bộ kiểm thử tự động toàn dự án đạt **191/191 tests pass 100%** trong 18.98s.
 
 ### [2026-09-14] Khắc Phục Triệt Để 5 Lỗ Hổng Vòng Đời & Dữ Liệu Nền Giá (Bugfix & Hardening) `(EXE)`
 - **Mode / Type / Action / Lane:** BUGFIX / REFACTOR / HARDENING / EXECUTE / n/a

@@ -110,7 +110,7 @@ def render_event_item(
     </div>
     """, unsafe_allow_html=True)
 
-    btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([3, 3, 2, 4])
+    btn_col1, btn_col2, btn_col3, btn_col4, btn_col5 = st.columns([2.5, 2.5, 2, 2.5, 2.5])
     with btn_col1:
         st.link_button(f"TradingView ({sym})", tv_url, use_container_width=True)
     with btn_col2:
@@ -128,8 +128,23 @@ def render_event_item(
     with btn_col4:
         cand_data = candidate_map.get(sym)
         if cand_data:
-            if st.button(f"Chi tiết setup {sym} 🔍", key=f"btn_detail_ev_{ev_id}_{sym}", use_container_width=True):
+            if st.button(f"Chi tiết {sym} 🔍", key=f"btn_detail_ev_{ev_id}_{sym}", use_container_width=True):
                 show_setup_detail_dialog(cand_data, as_of=as_of, repo=repo, key_suffix=f"ev_{ev_id}")
+    with btn_col5:
+        if is_external_event:
+            if st.button("Lịch BCTC 📅", key=f"btn_nav_earn_{ev_id}", use_container_width=True):
+                st.session_state["active_page"] = "Lịch BCTC"
+                st.rerun()
+        elif ev_type in ("sector_rank_shift", "market_breadth_shift"):
+            target_p = "Ngành" if "sector" in ev_type else "Thị trường"
+            if st.button(f"Xem {target_p} →", key=f"btn_nav_ctx_{ev_id}", use_container_width=True):
+                st.session_state["active_page"] = target_p
+                st.rerun()
+        elif cand_data:
+            sec = cand_data.get("sector")
+            if sec and st.button(f"Xem Ngành {sec} →", key=f"btn_nav_cand_sec_{ev_id}", use_container_width=True, help=f"Xem bối cảnh ngành {sec}"):
+                st.session_state["active_page"] = "Ngành"
+                st.rerun()
 
 def _render_paginated_events(
     events_list: List[Dict[str, Any]],
@@ -171,8 +186,20 @@ def render_today_dashboard(
     repo: MarketRadarRepository
 ):
     """Render the Today Dashboard section."""
-    st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">Hôm Nay: Cơ Hội & Sự Kiện Đáng Chú Ý</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="editorial-sub">Tổng hợp các tín hiệu mới xuất hiện, thay đổi trạng thái setup, sự kiện BCTC và biến động thị trường của phiên <code>{as_of}</code>.</div>', unsafe_allow_html=True)
+    c_title, c_shortcuts = st.columns([3, 2])
+    with c_title:
+        st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">📌 Tổng Hợp Phiên (Daily Session Synthesis)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="editorial-sub">Tổng hợp các tín hiệu mới xuất hiện, thay đổi trạng thái setup, sự kiện BCTC và biến động thị trường của phiên <code>{as_of}</code>.</div>', unsafe_allow_html=True)
+    with c_shortcuts:
+        col_sc1, col_sc2 = st.columns(2)
+        with col_sc1:
+            if st.button("📅 Lịch BCTC →", key="btn_today_to_bctc", use_container_width=True, help="Mở Lịch Báo Cáo Tài Chính toàn thị trường"):
+                st.session_state["active_page"] = "Lịch BCTC"
+                st.rerun()
+        with col_sc2:
+            if st.button("🔄 Thay đổi giữa phiên →", key="btn_today_to_diff", use_container_width=True, help="So sánh biến động giữa các snapshot"):
+                st.session_state["active_page"] = "Thay đổi giữa phiên"
+                st.rerun()
 
     # Candidate map for quick detail lookup
     candidate_map = {c["symbol"]: c for c in candidates}
@@ -266,7 +293,13 @@ def render_today_dashboard(
 
     elif selected_today_sub == "earnings":
         st.markdown("<div style='font-size: 14.5px; color: #787774; margin-bottom: 8px;'>Lịch công bố báo cáo tài chính (BCTC) trong vòng 14 ngày tới của các ứng viên.</div>", unsafe_allow_html=True)
-        st.info("💡 Bạn có thể xem toàn bộ lịch báo cáo tài chính S&P 500, phân loại phiên BMO/AMC và lịch tuần tại tab **'03 Lịch Báo Cáo Tài Chính (Earnings)'** ở thanh điều hướng phía trên.")
+        c_earn_info, c_earn_btn = st.columns([3.5, 1.5])
+        with c_earn_info:
+            st.info("💡 Bạn có thể xem toàn bộ lịch báo cáo tài chính S&P 500, phân loại phiên BMO/AMC và lịch tuần tại trang **'Lịch BCTC'** ở thanh điều hướng bên trái.")
+        with c_earn_btn:
+            if st.button("Mở Lịch BCTC ngay →", key="btn_open_bctc_from_today_sub", use_container_width=True):
+                st.session_state["active_page"] = "Lịch BCTC"
+                st.rerun()
         if group_earnings:
             _render_paginated_events(group_earnings, candidate_map, as_of, repo, "page_today_earnings", "Mã")
         else:

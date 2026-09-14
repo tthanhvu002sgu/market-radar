@@ -23,8 +23,7 @@ GROUP_TITLES = {
     "short_cont": ("Short Tiếp Diễn (Downtrend Continuation)", "Cổ phiếu trong xu hướng giảm rõ rệt, yếu hơn thị trường, xuất hiện nhịp hồi chạm kháng cự hoặc breakdown tiếp diễn."),
     "long_rev": ("Long Đảo Chiều (Mean Reversion / Reversal)", "Cổ phiếu có dấu hiệu tạo đáy kỹ thuật sau chuỗi giảm sâu hoặc vượt trở lại trên MA20."),
     "short_rev": ("Short Đảo Chiều (Top Breakdown)", "Cổ phiếu tăng quá đà, xuất hiện suy yếu hoặc gãy MA20 báo hiệu đảo chiều giảm."),
-    "base_building": ("Đang Xây Nền (Base Building)", "Cổ phiếu đang tích lũy trong nền giá hẹp, biên độ và volume co hẹp trước điểm bứt phá."),
-    "watchlist": ("Danh sách Theo Dõi (Watchlist)", "Mã có tín hiệu mâu thuẫn hoặc đang hình thành mẫu hình nhưng chưa đủ xác nhận kỹ thuật.")
+    "watchlist": ("Tín Hiệu Mâu Thuẫn (Contradiction)", "Mã có tín hiệu kỹ thuật trái chiều hoặc đang hình thành mẫu hình nhưng chưa đủ điều kiện đồng pha để giải ngân.")
 }
 
 def render_candidate_card(
@@ -257,6 +256,12 @@ def render_candidate_card(
             if st.button(f"Chi tiết {sym} →", key=card_btn_key, type="primary", use_container_width=True):
                 from app.components.setup_detail import show_setup_detail_dialog
                 show_setup_detail_dialog(cand, as_of=as_of, repo=repo, key_suffix=f"card_{sym}_{key_suffix}")
+            if base_info:
+                base_btn_key = f"btn_card_base_{sym}_{key_suffix}" if key_suffix else f"btn_card_base_{sym}"
+                if st.button("Nền giá 🧱", key=base_btn_key, use_container_width=True, help=f"Mở màn hình Nền giá & bứt phá với mã {sym}"):
+                    st.session_state["active_page"] = "Nền giá & bứt phá"
+                    st.session_state["base_search_input"] = sym
+                    st.rerun()
             st.link_button(f"Chart {sym} ↗", tv_url, use_container_width=True)
             sec_url = (fa_flags.get("sec_filing_url") if isinstance(fa_flags, dict) else None) or f"https://www.sec.gov/edgar/browse/?CIK={sym}"
             st.link_button("Tra cứu SEC ↗", sec_url, use_container_width=True)
@@ -461,9 +466,15 @@ def render_candidates_comparison(candidates: List[Dict[str, Any]], as_of: str = 
 
 
 def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "", repo: Any = None, snapshot_id: Optional[int] = None):
-    """Render candidates partitioned by the 4 groups + watchlist."""
-    st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">4 Nhóm Ứng Viên Giao Dịch (Swing Candidates)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="editorial-sub">Phân loại ứng viên theo pha chu kỳ và điểm kích hoạt vào lệnh (Continuation & Reversal).</div>', unsafe_allow_html=True)
+    """Render candidates partitioned by the 4 groups + contradiction watchlist."""
+    c_head1, c_head2 = st.columns([3.5, 1.5])
+    with c_head1:
+        st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">4 Nhóm Ứng Viên Giao Dịch (Swing Candidates)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="editorial-sub">Phân loại ứng viên theo pha chu kỳ và điểm kích hoạt vào lệnh (Continuation & Reversal).</div>', unsafe_allow_html=True)
+    with c_head2:
+        if st.button("🧱 Sang Nền giá & bứt phá →", key="btn_shortcut_to_bases", use_container_width=True, help="Chuyển đến màn hình theo dõi nền giá tích lũy"):
+            st.session_state["active_page"] = "Nền giá & bứt phá"
+            st.rerun()
 
     if not candidates:
         st.info("Không có mã nào đạt điều kiện trong kỳ phân tích này. Thị trường đang ở pha phân hóa hoặc không thỏa mãn tiêu chí kỹ thuật.")
@@ -477,13 +488,45 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
             f"Theo quy tắc giao dịch ngắn 'không giữ lệnh qua tuần', các vị thế mở mới cần ưu tiên chốt trước cuối tuần hoặc hoãn sang đầu tuần sau để tránh rủi ro vắt qua cuối tuần (`crosses_weekend`)."
         )
 
-    # Controls
-    f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns([2.0, 1.2, 1.1, 1.3, 1.2])
+    # Cross-navigation context banner (from Ngành or Nhóm ngành)
+    nav_from = st.session_state.get("cand_nav_from")
+    sector_filter = st.session_state.get("cand_sector_filter")
+    sub_ind_filter = st.session_state.get("cand_sub_industry_filter")
+
+    if nav_from:
+        c_n1, c_n2 = st.columns([4, 1.2])
+        with c_n1:
+            st.info(f"Đang hiển thị ứng viên lọc từ **{nav_from.get('page', 'Bối cảnh')}**: **{nav_from.get('label', '')}**")
+        with c_n2:
+            if st.button(f"← Quay lại {nav_from.get('page', 'trang trước')}", key="btn_cand_back_to_source", use_container_width=True):
+                prev_p = nav_from.get("page")
+                del st.session_state["cand_nav_from"]
+                if "cand_sector_filter" in st.session_state:
+                    del st.session_state["cand_sector_filter"]
+                if "cand_sub_industry_filter" in st.session_state:
+                    del st.session_state["cand_sub_industry_filter"]
+                st.session_state["active_page"] = prev_p
+                st.rerun()
+    elif sector_filter or sub_ind_filter:
+        lbl = sector_filter or sub_ind_filter
+        c_n1, c_n2 = st.columns([4, 1.2])
+        with c_n1:
+            st.info(f"Đang áp dụng bộ lọc: **{lbl}**")
+        with c_n2:
+            if st.button("✕ Xóa bộ lọc", key="btn_clear_cand_filters", use_container_width=True):
+                if "cand_sector_filter" in st.session_state:
+                    del st.session_state["cand_sector_filter"]
+                if "cand_sub_industry_filter" in st.session_state:
+                    del st.session_state["cand_sub_industry_filter"]
+                st.rerun()
+
+    # Controls: Priority Table view by default
+    f_col1, f_col2, f_col3, f_col4 = st.columns([2.0, 1.2, 1.1, 1.3])
     with f_col1:
-        search_sym = st.text_input("Tìm kiếm mã:", placeholder="Nhập AAPL, MSFT, NVDA...", key="cand_search_input").strip().lower()
+        search_sym = st.text_input("Tìm kiếm mã hoặc công ty:", placeholder="Nhập AAPL, MSFT, NVDA...", key="cand_search_input").strip().lower()
 
     with f_col2:
-        view_mode = st.selectbox("Chế độ hiển thị:", ["Dạng Thẻ (Cards)", "Bảng Rút Gọn"], index=0, key="cand_view_mode")
+        view_mode = st.selectbox("Chế độ hiển thị:", ["Bảng Rút Gọn", "Dạng Thẻ (Cards)"], index=0, key="cand_view_mode")
 
     with f_col3:
         only_leader = st.checkbox("Chỉ Leaders", value=False, key="cand_only_leaders", help="Chỉ hiển thị cổ phiếu thuộc nhóm ngành dẫn dắt (Top 20% Composite RS)")
@@ -497,49 +540,14 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
             help="Lọc cơ hội mở vị thế theo số phiên giao dịch còn lại của tuần để tránh rủi ro vắt qua cuối tuần (crosses_weekend)."
         )
 
-    with f_col5:
-        as_of_tag = as_of.split()[0] if as_of else "latest"
-        csv_candidates = [
-            {
-                "symbol": c["symbol"],
-                "company_name": c.get("company_name", c["symbol"]),
-                "group_type": c.get("group_type"),
-                "setup_type": c.get("setup_type"),
-                "status": c.get("status"),
-                "score": c.get("score"),
-                "rank": c.get("rank"),
-                "close_price": c.get("close_price"),
-                "trigger_price": c.get("trigger_price"),
-                "invalidation_price": c.get("invalidation_price"),
-                "perf_1d": c.get("perf_1d"),
-                "perf_5d": c.get("perf_5d"),
-                "perf_20d": c.get("perf_20d"),
-                "atr14": c.get("atr14"),
-                "is_oneil_leader": c.get("is_oneil_leader", False),
-                "sector": c.get("sector"),
-                "sub_industry": c.get("sub_industry"),
-            }
-            for c in candidates
-        ]
-        csv_df = pd.DataFrame(csv_candidates)
-        csv_data = csv_df.to_csv(index=False)
-        st.download_button(
-            label="Xuất CSV 📥",
-            data=csv_data,
-            file_name=f"market_radar_candidates_{as_of_tag}.csv",
-            mime="text/csv",
-            use_container_width=True,
-            key="btn_dl_cand_csv"
-        )
-
-    # Side-by-side comparison expander
-    with st.expander("⚖️ So sánh Trực diện 2–5 Ứng viên (Side-by-Side)", expanded=False):
-        render_candidates_comparison(candidates, as_of=as_of, repo=repo)
-
+    # Apply filters to form display_candidates
     display_candidates = candidates
+    if sector_filter:
+        display_candidates = [c for c in display_candidates if c.get("sector") == sector_filter]
+    if sub_ind_filter:
+        display_candidates = [c for c in display_candidates if c.get("sub_industry") == sub_ind_filter]
     if only_leader:
         display_candidates = [c for c in display_candidates if c.get("is_oneil_leader")]
-
     if search_sym:
         display_candidates = [
             c for c in display_candidates
@@ -554,11 +562,52 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
         st.info(f"Tuần hiện tại chỉ còn {rem_sessions} phiên giao dịch (< 3 phiên). Đã lọc ẩn danh sách swing theo tiêu chí số phiên còn lại.")
         return
 
+    # Dual CSV Exports with Standardized Columns
+    as_of_tag = as_of.split()[0] if as_of else "latest"
+    export_cols = [
+        "rank", "symbol", "company_name", "sector", "sub_industry",
+        "group_type", "setup_type", "status", "score", "is_oneil_leader",
+        "close_price", "trigger_price", "invalidation_price", "atr14", "atr_pct",
+        "perf_1d", "perf_5d", "perf_20d"
+    ]
+
+    def _build_csv_data(cand_list):
+        if not cand_list:
+            return ""
+        available_cols = [col for col in export_cols if col in cand_list[0]]
+        return pd.DataFrame(cand_list)[available_cols].to_csv(index=False)
+
+    c_csv1, c_csv2, c_csv_space = st.columns([1.8, 1.8, 2.4])
+    with c_csv1:
+        st.download_button(
+            label=f"Xuất kết quả đang lọc ({len(display_candidates)} mã) 📥",
+            data=_build_csv_data(display_candidates),
+            file_name=f"market_radar_candidates_filtered_{as_of_tag}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="btn_dl_cand_filtered_csv",
+            disabled=len(display_candidates) == 0
+        )
+    with c_csv2:
+        st.download_button(
+            label=f"Xuất toàn bộ ({len(candidates)} mã) 📥",
+            data=_build_csv_data(candidates),
+            file_name=f"market_radar_candidates_all_{as_of_tag}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="btn_dl_cand_all_csv"
+        )
+
+    # Side-by-side comparison expander scoped to current view
+    with st.expander("⚖️ So sánh Trực diện 2–5 Ứng viên (Side-by-Side)", expanded=False):
+        compare_pool = display_candidates if len(display_candidates) >= 2 else candidates
+        render_candidates_comparison(compare_pool, as_of=as_of, repo=repo)
+
     if not display_candidates:
         st.info("Không có ứng viên nào thỏa mãn điều kiện lọc hiện tại.")
         return
 
-    # Group candidates
+    # Group candidates into 4 tactical groups + contradiction watchlist
     grouped: Dict[str, List[Dict[str, Any]]] = {
         "long_cont": [],
         "short_cont": [],
@@ -575,14 +624,14 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
 
     base_records = repo.get_base_snapshots(snapshot_id=snapshot_id, as_of=as_of) if repo else []
     base_map = {b["symbol"]: b for b in base_records}
-    sub_keys = ["long_cont", "short_cont", "long_rev", "short_rev", "base_building", "watchlist"]
+
+    sub_keys = ["long_cont", "short_cont", "long_rev", "short_rev", "watchlist"]
     sub_labels = {
         "long_cont": f"Long Tiếp Diễn ({len(grouped['long_cont'])})",
         "short_cont": f"Short Tiếp Diễn ({len(grouped['short_cont'])})",
         "long_rev": f"Long Đảo Chiều ({len(grouped['long_rev'])})",
         "short_rev": f"Short Đảo Chiều ({len(grouped['short_rev'])})",
-        "base_building": f"🧱 Đang Xây Nền ({len(base_records)})",
-        "watchlist": f"Theo Dõi ({len(grouped['watchlist'])})"
+        "watchlist": f"Tín Hiệu Mâu Thuẫn ({len(grouped['watchlist'])})"
     }
 
     selected_sub = st.segmented_control(
@@ -606,31 +655,26 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
     g_key = selected_sub
     title, desc = GROUP_TITLES[g_key]
 
-    if g_key == "base_building":
-        render_base_watchlist(base_records, as_of=as_of, repo=repo)
-        return
-
     st.markdown(f"<div style='font-size: 13.5px; color: #787774; margin-bottom: 16px; margin-top: 12px;'>{desc}</div>", unsafe_allow_html=True)
     group_cands = grouped[g_key]
     if not group_cands:
-        st.info(f"Không có cổ phiếu nào thỏa mãn điều kiện cho nhóm {title} trong snapshot hiện tại.")
+        st.info(f"Không có cổ phiếu nào thỏa mãn điều kiện cho nhóm {title} trong bộ lọc hiện tại.")
     else:
         if view_mode == "Bảng Rút Gọn":
             render_candidates_table(group_cands, as_of=as_of, repo=repo)
             st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
             sel_sym = st.selectbox(
-                f"Xem chi tiết Setup & Mẫu Nến ({title}):",
+                f"Mở modal xem chi tiết Setup & Mức kỹ thuật ({title}):",
                 ["-- Chọn mã để xem chi tiết kỹ thuật --"] + [c["symbol"] for c in group_cands],
                 key=f"sel_detail_table_{g_key}"
             )
             if sel_sym and sel_sym != "-- Chọn mã để xem chi tiết kỹ thuật --":
                 cand_item = next((c for c in group_cands if c["symbol"] == sel_sym), None)
                 if cand_item:
-                    with st.expander(f"Chi tiết Setup & Mức kỹ thuật: {sel_sym}", expanded=True):
-                        from app.components.setup_detail import render_setup_detail_modal
-                        render_setup_detail_modal(cand_item, as_of=as_of, repo=repo, key_suffix=f"tbl_{g_key}_{sel_sym}")
+                    from app.components.setup_detail import show_setup_detail_dialog
+                    show_setup_detail_dialog(cand_item, as_of=as_of, repo=repo, key_suffix=f"tbl_{g_key}_{sel_sym}")
         else:
-            # Quick selector for modal inspection
+            # Quick selector for modal inspection in card mode
             sel_sym = st.selectbox(
                 f"Mở modal xem chi tiết Setup & Mức kỹ thuật ({title}):",
                 ["-- Chọn mã cần mở chi tiết --"] + [c["symbol"] for c in group_cands],

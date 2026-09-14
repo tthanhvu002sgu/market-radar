@@ -552,3 +552,121 @@ class TestEdgeCasesAndEnhancements:
         assert res_t2.is_active is False
         assert "2 phiên liên tiếp đóng cửa dưới MA50" in (res_t2.end_reason or "")
 
+
+class TestBaseCardSynchronizedRendering:
+    """Verify synchronized stock card rendering in base_watchlist."""
+
+    def test_render_individual_base_card_resilience(self):
+        from app.components.base_watchlist import _render_individual_base_card
+        sample_b = {
+            "symbol": "AAPL",
+            "company_name": "Apple Inc.",
+            "sector": "Information Technology",
+            "sub_industry": "Technology Hardware",
+            "close_price": 220.5,
+            "perf_1d": 1.25,
+            "upper": 225.0,
+            "lower": 210.0,
+            "width_pct": 7.1,
+            "now_vs_pivot_pct": -2.0,
+            "rs_rating": 85,
+            "from_52w_high_pct": 3.5,
+            "lifecycle_phase": "forming",
+            "state": "tight",
+            "breakout_bar_count": 0,
+            "checks": [{"name": "Biên độ", "threshold": "<= 15%", "value": "7.1%", "pass": True}]
+        }
+
+        # 1. repo=None, candidate_map=None
+        _render_individual_base_card(sample_b, as_of="2026-09-14", repo=None, key_suffix="test1")
+
+        # 2. With candidate_map and mock repo
+        class MockRepo:
+            def get_fundamentals(self, symbols):
+                return pd.DataFrame()
+            def get_base_history_by_symbol(self, sym, as_of=None):
+                return []
+
+        cand_map = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "company_name": "Apple Inc.",
+                "is_oneil_leader": True,
+                "fa_flags": {
+                    "has_data": True,
+                    "days_to_earnings": 10,
+                    "next_earnings_date": "2026-09-24",
+                    "flags": ["Cảnh báo: Tỷ lệ nợ cao"],
+                    "period_end": "2026-06-30",
+                    "metrics": {"profit_margin_str": "24.5%"}
+                }
+            }
+        }
+        _render_individual_base_card(sample_b, as_of="2026-09-14", repo=MockRepo(), key_suffix="test2", candidate_map=cand_map)
+
+    def test_render_grouped_base_card_resilience(self):
+        from app.components.base_watchlist import _render_grouped_base_card
+        setups = [
+            {
+                "symbol": "MSFT",
+                "company_name": "Microsoft Corp.",
+                "sector": "Information Technology",
+                "sub_industry": "Software",
+                "close_price": 430.0,
+                "perf_1d": -0.5,
+                "upper": 435.0,
+                "lower": 415.0,
+                "width_pct": 4.8,
+                "now_vs_pivot_pct": -1.1,
+                "rs_rating": 78,
+                "lifecycle_phase": "forming",
+                "state": "forming"
+            },
+            {
+                "symbol": "MSFT",
+                "company_name": "Microsoft Corp.",
+                "sector": "Information Technology",
+                "sub_industry": "Software",
+                "close_price": 430.0,
+                "perf_1d": -0.5,
+                "upper": 420.0,
+                "lower": 400.0,
+                "width_pct": 5.0,
+                "now_vs_pivot_pct": 2.3,
+                "rs_rating": 78,
+                "lifecycle_phase": "played_out",
+                "state": "played_out",
+                "ended_at": "2026-08-30",
+                "end_reason": "Thủng MA50"
+            }
+        ]
+        _render_grouped_base_card("MSFT", setups, as_of="2026-09-14", repo=None, key_suffix="test_grp")
+
+    def test_render_card_fa_column(self):
+        from app.components.base_watchlist import _render_card_fa_column
+        # Empty flags
+        _render_card_fa_column("GOOGL", None, as_of="2026-09-14", repo=None)
+
+        # Full FA flags
+        full_fa = {
+            "has_data": True,
+            "days_to_earnings": 20,
+            "next_earnings_date": "2026-10-04",
+            "flags": ["Biên ròng ổn định"],
+            "period_end": "2026-06-30",
+            "metrics": {"profit_margin_str": "28.0%"}
+        }
+        _render_card_fa_column("GOOGL", full_fa, as_of="2026-09-14", repo=None)
+
+    def test_render_base_watchlist_accepts_candidates_and_handles_empty(self):
+        from app.components.base_watchlist import render_base_watchlist
+        # Should render empty message gracefully without exception
+        render_base_watchlist(
+            base_records=[],
+            as_of="2026-09-14",
+            repo=None,
+            snapshot_id=1,
+            candidates=[]
+        )
+
+

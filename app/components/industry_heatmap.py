@@ -327,7 +327,23 @@ def render_industry_heatmap(industry_metrics: List[Dict[str, Any]]):
 
     if hasattr(st, "html"):
         st.html(table_html)
-    else:
-        st.markdown(table_html, unsafe_allow_html=True)
-
     st.caption("*: Nhóm ngành có mẫu nhỏ (≤ 2 cổ phiếu trong S&P 500). Cột 1Y hiển thị N/A khi chưa đủ 253 phiên đóng cửa.")
+
+    # Cross-navigation to Candidates
+    all_sub_names = sorted([g["industry"] for g in industry_data if g.get("industry")])
+    if all_sub_names:
+        st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
+        c_hm_sel1, c_hm_sel2 = st.columns([3, 2])
+        with c_hm_sel1:
+            chosen_sub = st.selectbox(
+                "Chuyển nhanh sang danh sách ứng viên theo nhóm ngành:",
+                ["-- Chọn nhóm ngành để lọc ứng viên --"] + all_sub_names,
+                key="sel_hm_to_candidates"
+            )
+        with c_hm_sel2:
+            if chosen_sub and chosen_sub != "-- Chọn nhóm ngành để lọc ứng viên --":
+                if st.button(f"Mở ứng viên nhóm {chosen_sub} 🎯", key="btn_hm_go_candidates", use_container_width=True):
+                    st.session_state["active_page"] = "Ứng viên"
+                    st.session_state["cand_sub_industry_filter"] = chosen_sub
+                    st.session_state["cand_nav_from"] = {"page": "Nhóm ngành", "label": f"Nhóm {chosen_sub}"}
+                    st.rerun()

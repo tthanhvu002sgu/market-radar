@@ -241,14 +241,14 @@ def render_setup_detail_modal(
 
     st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
 
-    # 3-Tab internal navigation for setup detail
-    tab_tech, tab_candle_fa, tab_check = st.tabs([
-        "📈 Kỹ Thuật & Mức Giá",
-        "🕯️ Nến Nhật & Bối Cảnh FA",
-        "✅ Checklist & Điều Kiện"
+    # 3-Tab internal navigation: Technical & Candle, Company & FA, Checklist
+    tab_tech, tab_fa, tab_check = st.tabs([
+        "📈 Kỹ Thuật & Mẫu Nến",
+        "🏢 Doanh Nghiệp & BCTC",
+        "✅ Checklist Điều Kiện"
     ])
 
-    # --- TAB 1: KỸ THUẬT & MỨC GIÁ ---
+    # --- TAB 1: KỸ THUẬT & MẪU NẾN ---
     with tab_tech:
         st.markdown('<div style="font-size: 14.5px; font-weight: 600; color: #111111; margin: 12px 0 8px 0;">Biểu đồ Kỹ thuật & Các Mức Setup Tham chiếu (Point-in-Time)</div>', unsafe_allow_html=True)
 
@@ -382,10 +382,10 @@ def render_setup_detail_modal(
             key=dl_key
         )
 
-    # --- TAB 2: NẾN NHẬT & BỐI CẢNH FA ---
-    with tab_candle_fa:
-        st.markdown('<div style="font-size: 16px; font-weight: 600; color: #111111; margin: 12px 0 8px 0;">Nhận Diện Nến Gần Nhất Đã Đóng & Phản Ứng Giá (Daily Candlestick)</div>', unsafe_allow_html=True)
+        st.markdown('<div style="height: 12px;"></div>', unsafe_allow_html=True)
 
+        # Candlestick Recognition & Price Reaction (grouped into Technical)
+        st.markdown('<div style="font-size: 16px; font-weight: 600; color: #111111; margin: 12px 0 8px 0;">Nhận Diện Nến Gần Nhất Đã Đóng & Phản Ứng Giá (Daily Candlestick)</div>', unsafe_allow_html=True)
         if candlestick_data:
             features = candlestick_data.get("features", {})
             interp = candlestick_data.get("interpretation", {})
@@ -461,7 +461,7 @@ def render_setup_detail_modal(
         else:
             st.info("Chưa có dữ liệu nến nhật gần nhất cho ứng viên này.")
 
-        # --- MULTI-SESSION BUYING/SELLING PRESSURE PROFILE [D-03] ---
+        # Multi-Session Buying/Selling Pressure Profile
         st.markdown('<div style="font-size: 16px; font-weight: 600; color: #111111; margin: 20px 0 8px 0;">Hồ Sơ Áp Lực Mua/Bán Đa Phiên (Multi-Session Pressure Profile)</div>', unsafe_allow_html=True)
         if pressure_data:
             bias_label = pressure_data.get("pressure_bias", "Đang theo dõi")
@@ -513,8 +513,9 @@ def render_setup_detail_modal(
         else:
             st.info("Chưa có hồ sơ áp lực mua/bán đa phiên cho mã này.")
 
-        # --- FUNDAMENTAL CONTEXT [D-01] ---
-        st.markdown('<div style="font-size: 16px; font-weight: 600; color: #111111; margin: 20px 0 8px 0;">Bối Cảnh Doanh Nghiệp & Lịch Công Bố BCTC (Fundamental Context)</div>', unsafe_allow_html=True)
+    # --- TAB 2: DOANH NGHIỆP & BCTC ---
+    with tab_fa:
+        st.markdown('<div style="font-size: 16px; font-weight: 600; color: #111111; margin: 12px 0 8px 0;">Bối Cảnh Doanh Nghiệp & Lịch Công Bố BCTC (Fundamental Context)</div>', unsafe_allow_html=True)
         if fa_flags and isinstance(fa_flags, dict) and fa_flags.get("has_data"):
             metrics = fa_flags.get("metrics", {})
             fiscal_period = fa_flags.get("fiscal_period") or metrics.get("fiscal_period", "Chưa xác minh kỳ")
@@ -594,20 +595,21 @@ def render_setup_detail_modal(
         st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
         st.link_button(f"Mở toàn màn hình biểu đồ {sym} trên TradingView ↗", tv_url, use_container_width=True)
 
-if hasattr(st, "dialog"):
-    @st.dialog("Chi tiết Kỹ thuật Setup", width="large")
-    def show_setup_detail_dialog(
-        candidate: Dict[str, Any],
-        as_of: str,
-        repo: Optional[MarketRadarRepository] = None,
-        key_suffix: str = ""
-    ):
-        render_setup_detail_modal(candidate, as_of=as_of, repo=repo, key_suffix=key_suffix)
-else:
-    def show_setup_detail_dialog(
-        candidate: Dict[str, Any],
-        as_of: str,
-        repo: Optional[MarketRadarRepository] = None,
-        key_suffix: str = ""
-    ):
-        render_setup_detail_modal(candidate, as_of=as_of, repo=repo, key_suffix=key_suffix)
+def show_setup_detail_dialog(
+    candidate: Dict[str, Any],
+    as_of: str,
+    repo: Optional[MarketRadarRepository] = None,
+    key_suffix: str = ""
+):
+    """Unified modal dialog or expander for setup technical detail."""
+    if hasattr(st, "dialog"):
+        try:
+            @st.dialog("Chi tiết Kỹ thuật Setup", width="large")
+            def _dialog_view():
+                render_setup_detail_modal(candidate, as_of=as_of, repo=repo, key_suffix=key_suffix)
+            _dialog_view()
+            return
+        except Exception:
+            pass
+
+    render_setup_detail_modal(candidate, as_of=as_of, repo=repo, key_suffix=key_suffix)

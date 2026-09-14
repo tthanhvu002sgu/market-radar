@@ -469,13 +469,21 @@ def render_gics_sectors(
     chosen_health = health_map.get(selected_sector, {})
 
     if chosen_sector_data:
-        # General sector narrative & divergence alert
-        st.markdown(f"""
-        <div style="background-color: #FFFFFF; border: 1px solid #EAEAEA; border-left: 3px solid #111111; padding: 14px 18px; border-radius: 4px; margin-bottom: 16px; font-size: 14.5px; line-height: 1.6; font-family: 'Geist', 'Inter', sans-serif;">
-            <div><b>Đánh giá trạng thái:</b> {chosen_sector_data['status_desc']}</div>
-            <div style="margin-top: 6px; color: #787774;"><b>Cơ cấu thanh khoản & phân kỳ:</b> {chosen_health.get('divergence_desc', 'Chưa có thông tin phân kỳ.')}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        c_desc, c_nav_btn = st.columns([3.5, 1.5])
+        with c_desc:
+            # General sector narrative & divergence alert
+            st.markdown(f"""
+            <div style="background-color: #FFFFFF; border: 1px solid #EAEAEA; border-left: 3px solid #111111; padding: 14px 18px; border-radius: 4px; margin-bottom: 16px; font-size: 14.5px; line-height: 1.6; font-family: 'Geist', 'Inter', sans-serif;">
+                <div><b>Đánh giá trạng thái:</b> {chosen_sector_data['status_desc']}</div>
+                <div style="margin-top: 6px; color: #787774;"><b>Cơ cấu thanh khoản & phân kỳ:</b> {chosen_health.get('divergence_desc', 'Chưa có thông tin phân kỳ.')}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_nav_btn:
+            if st.button(f"Xem Ứng viên {selected_sector} 🎯", key=f"btn_nav_cand_from_sec_{selected_sector}", use_container_width=True, help=f"Chuyển sang Ứng viên lọc theo ngành {selected_sector}"):
+                st.session_state["active_page"] = "Ứng viên"
+                st.session_state["cand_sector_filter"] = selected_sector
+                st.session_state["cand_nav_from"] = {"page": "Ngành", "label": f"Ngành {selected_sector}"}
+                st.rerun()
 
         tab_sec1, tab_sec2 = st.tabs([
             "🏆 Top 5 Cổ Phiếu Đóng Góp Thanh Khoản Lớn Nhất",
@@ -544,6 +552,18 @@ def render_gics_sectors(
                 ])
                 st.dataframe(sub_df, use_container_width=True, hide_index=True)
                 st.caption("*: Nhóm ngành nhỏ có mẫu nhỏ (≤ 2 mã trong S&P 500). Đối chiếu lợi suất trung vị để tránh méo mó do một cổ phiếu cá biệt.")
+
+                sub_names = [sub["sub_industry"] for sub in sub_inds]
+                c_sub_sel1, c_sub_sel2 = st.columns([3, 2])
+                with c_sub_sel1:
+                    sel_sub = st.selectbox("Xem ứng viên thuộc nhóm ngành nhỏ:", ["-- Chọn nhóm ngành nhỏ --"] + sub_names, key=f"sel_cand_sub_{selected_sector}")
+                with c_sub_sel2:
+                    if sel_sub and sel_sub != "-- Chọn nhóm ngành nhỏ --":
+                        if st.button(f"Mở ứng viên nhóm {sel_sub} 🎯", key=f"btn_go_sub_{selected_sector}"):
+                            st.session_state["active_page"] = "Ứng viên"
+                            st.session_state["cand_sub_industry_filter"] = sel_sub
+                            st.session_state["cand_nav_from"] = {"page": "Ngành", "label": f"Nhóm {sel_sub}"}
+                            st.rerun()
             else:
                 st.write("Không có dữ liệu nhóm ngành nhỏ cho ngành này.")
 
