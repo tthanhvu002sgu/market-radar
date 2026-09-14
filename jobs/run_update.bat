@@ -8,10 +8,20 @@ rem ===================================================================
 rem Chuyen ve thu muc goc cua Market Radar
 cd /d "%~dp0\.."
 
-rem Kiem tra Python
-where python >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Khong tim thay Python trong PATH cua he thong.
+set "PYTHON_CMD="
+if exist "venv\Scripts\python.exe" (
+    set "PYTHON_CMD=venv\Scripts\python.exe"
+) else if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_CMD=.venv\Scripts\python.exe"
+) else (
+    where python >nul 2>&1
+    if %ERRORLEVEL% equ 0 (
+        set "PYTHON_CMD=python"
+    )
+)
+
+if "%PYTHON_CMD%"=="" (
+    echo [ERROR] Khong tim thay Python trong he thong.
     exit /b 1
 )
 
@@ -22,7 +32,7 @@ echo ===================================================== >> "logs\scheduler.lo
 echo [START] %date% %time% - Bat dau tien trinh cap nhat du lieu >> "logs\scheduler.log"
 
 rem Chay pipeline cap nhat va chuyen toan bo output vao file log
-python -m jobs.update_pipeline >> "logs\scheduler.log" 2>&1
+"%PYTHON_CMD%" -m jobs.update_pipeline >> "logs\scheduler.log" 2>&1
 
 if %ERRORLEVEL% equ 0 (
     echo [FINISH] %date% %time% - Cap nhat snapshot thanh cong! >> "logs\scheduler.log"

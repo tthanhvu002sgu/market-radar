@@ -256,6 +256,14 @@ else:
     st.sidebar.info("Chưa có snapshot nào trong cơ sở dữ liệu. Nhấn 'Cập nhật dữ liệu ngay' để nạp lần đầu.")
 
 # Sidebar Data Status
+is_invariant_violation = False
+is_legacy = False
+is_stale = False
+session_age = None
+as_of = ""
+valid_u = 0
+total_u = 0
+
 if selected_snapshot:
     as_of = selected_snapshot.get("as_of", "N/A")
     cov = selected_snapshot.get("coverage_pct", 0.0) * 100.0
@@ -332,25 +340,25 @@ st.markdown('<h1 class="editorial-hero">Market Radar</h1>', unsafe_allow_html=Tr
 st.markdown('<div class="editorial-sub">S&P 500 Top-Down Swing Trading Architecture &mdash; Phân tích đa tầng từ cơ hội hôm nay, bối cảnh thị trường, xếp hạng ngành GICS đến chi tiết kỹ thuật setup và đo lường hiệu quả bộ lọc.</div>', unsafe_allow_html=True)
 
 # Compatibility & Stale Hard-Gate Banners [R-04]
-if is_invariant_violation or is_legacy:
-    st.markdown(f"""
-    <div style="background-color: #FFF8E6; border: 1px solid #FFE082; border-radius: 6px; padding: 14px 20px; margin-bottom: 16px; font-size: 14px; color: #795548; line-height: 1.6;">
-        <b>⚠️ Cảnh báo Snapshot Legacy / Không Tương Thích:</b> Snapshot <code>{as_of}</code> được tạo trước đợt nâng cấp schema/contract ({'Số mã hợp lệ ' + str(valid_u) + '/' + str(total_u) + ' vi phạm bất biến vũ trụ' if is_invariant_violation else 'Thiếu metadata chuẩn hóa hoặc chưa đủ độ bao phủ lịch sử 1Y'}). Trạng thái 'Complete' của snapshot chỉ phản ánh thời điểm tạo; ở thời điểm hiện tại dữ liệu đã chậm phiên hoặc chưa đồng bộ tính năng mới. Vui lòng bấm nút <b>Cập nhật dữ liệu ngay</b> ở thanh bên trái để tạo snapshot mới đồng bộ chuẩn hóa.
-    </div>
-    """, unsafe_allow_html=True)
-elif is_stale:
-    lag = session_age.get("lag_sessions", 1)
-    target_s = session_age.get("target_session", "")
-    st.markdown(f"""
-    <div style="background-color: #FFF8E6; border: 1px solid #FFE082; border-radius: 6px; padding: 14px 20px; margin-bottom: 16px; font-size: 14px; color: #795548; line-height: 1.6;">
-        <b>⚠️ Chú ý: Dữ liệu Lịch sử (Chậm {lag} phiên):</b> Snapshot đang hiển thị là phiên <code>{as_of}</code>, trong khi phiên đóng cửa gần nhất của thị trường là <code>{target_s}</code>. Các sự kiện tại tab <b>Hôm Nay</b> và danh sách <b>Ứng Viên</b> phản ánh góc nhìn lịch sử tại phiên {as_of}, không đại diện cho phiên hôm nay. Bấm <b>Cập nhật dữ liệu ngay</b> ở thanh bên trái để tải dữ liệu phiên mới nhất.
-    </div>
-    """, unsafe_allow_html=True)
+if selected_snapshot:
+    if is_invariant_violation or is_legacy:
+        st.markdown(f"""
+        <div style="background-color: #FFF8E6; border: 1px solid #FFE082; border-radius: 6px; padding: 14px 20px; margin-bottom: 16px; font-size: 14px; color: #795548; line-height: 1.6;">
+            <b>⚠️ Cảnh báo Snapshot Legacy / Không Tương Thích:</b> Snapshot <code>{as_of}</code> được tạo trước đợt nâng cấp schema/contract ({'Số mã hợp lệ ' + str(valid_u) + '/' + str(total_u) + ' vi phạm bất biến vũ trụ' if is_invariant_violation else 'Thiếu metadata chuẩn hóa hoặc chưa đủ độ bao phủ lịch sử 1Y'}). Trạng thái 'Complete' của snapshot chỉ phản ánh thời điểm tạo; ở thời điểm hiện tại dữ liệu đã chậm phiên hoặc chưa đồng bộ tính năng mới. Vui lòng bấm nút <b>Cập nhật dữ liệu ngay</b> ở thanh bên trái để tạo snapshot mới đồng bộ chuẩn hóa.
+        </div>
+        """, unsafe_allow_html=True)
+    elif is_stale and session_age:
+        lag = session_age.get("lag_sessions", 1)
+        target_s = session_age.get("target_session", "")
+        st.markdown(f"""
+        <div style="background-color: #FFF8E6; border: 1px solid #FFE082; border-radius: 6px; padding: 14px 20px; margin-bottom: 16px; font-size: 14px; color: #795548; line-height: 1.6;">
+            <b>⚠️ Chú ý: Dữ liệu Lịch sử (Chậm {lag} phiên):</b> Snapshot đang hiển thị là phiên <code>{as_of}</code>, trong khi phiên đóng cửa gần nhất của thị trường là <code>{target_s}</code>. Các sự kiện tại tab <b>Hôm Nay</b> và danh sách <b>Ứng Viên</b> phản ánh góc nhìn lịch sử tại phiên {as_of}, không đại diện cho phiên hôm nay. Bấm <b>Cập nhật dữ liệu ngay</b> ở thanh bên trái để tải dữ liệu phiên mới nhất.
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # Executive Market Clock, Freshness & Universe Scope Banner [D-05, D-06]
 mkt_status = get_market_status_now()
-session_age = compute_session_age(selected_snapshot.get("as_of", "")) if selected_snapshot else None
 
 c_clk1, c_clk2 = st.columns([1, 1])
 with c_clk1:
@@ -382,6 +390,18 @@ with c_clk2:
             <div style="font-size: 13px; color: #2F3437; line-height: 1.6;">
                 <div><b>Phiên dữ liệu:</b> <code style="font-family: 'Geist Mono', monospace; font-size: 11.5px; background: #F7F6F3; padding: 1px 5px; border-radius: 3px;">{session_age['as_of']}</code> &nbsp;|&nbsp; <b>Vũ trụ:</b> <span style="font-weight: 600;">503 mã S&P 500 (Large Cap)</span></div>
                 <div style="font-size: 11.5px; color: #787774; margin-top: 4px;">Giá EOD đã điều chỉnh. Không bao gồm penny/OTC hay toàn bộ ~8.000 mã Mỹ ngoài chỉ số.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="background-color: #FFFFFF; border: 1px solid #EAEAEA; border-radius: 6px; padding: 14px 18px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span class="editorial-label">Độ Tươi Dữ Liệu</span>
+                <span style="background-color: #FEF3D6; color: #8F6B00; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 9999px; letter-spacing: 0.04em; text-transform: uppercase;">Chưa có dữ liệu</span>
+            </div>
+            <div style="font-size: 13px; color: #787774; line-height: 1.6;">
+                Hệ thống chưa có snapshot nào. Nhấn <b>Cập nhật dữ liệu ngay</b> ở thanh bên trái để khởi tạo.
             </div>
         </div>
         """, unsafe_allow_html=True)
