@@ -4,15 +4,42 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import yfinance as yf
 
+from config.settings import DEFAULT_FETCH_PERIOD
 from providers.base import BaseMarketDataProvider
 
 logger = logging.getLogger(__name__)
+ 
+def _parse_date_or_ts(val: Any) -> Optional[datetime]:
+    """Parse timestamps, date strings, or datetime objects into a python datetime."""
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.fromtimestamp(val)
+        except Exception:
+            return None
+    if isinstance(val, datetime):
+        return val
+    if hasattr(val, "to_pydatetime"):
+        return val.to_pydatetime()
+    if isinstance(val, str):
+        clean = val.split()[0].strip()
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(clean, fmt)
+            except ValueError:
+                pass
+        try:
+            return pd.to_datetime(val).to_pydatetime()
+        except Exception:
+            return None
+    return None
 
 class YFinanceProvider(BaseMarketDataProvider):
     def __init__(self, batch_size: int = 100):
         self.batch_size = batch_size
 
-    def fetch_daily_ohlcv(self, symbols: List[str], period: str = "1y") -> Tuple[List[Tuple[str, str, float, float, float, float, float]], List[str]]:
+    def fetch_daily_ohlcv(self, symbols: List[str], period: str = DEFAULT_FETCH_PERIOD) -> Tuple[List[Tuple[str, str, float, float, float, float, float]], List[str]]:
         """
         Fetch daily OHLCV bars for symbols in batches.
         Returns:
@@ -130,41 +157,129 @@ class YFinanceProvider(BaseMarketDataProvider):
                 if next_earnings == "Chưa xác minh" and "earningsTimestamp" in info:
                     ts = info.get("earningsTimestamp")
                     if ts:
-                        next_earnings = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                        try:
+                            parsed_dt = datetime.fromtimestamp(ts)
+                            # Only treat as next earnings if date is in the future [D-07]
+                            if parsed_dt.date() >= datetime.now().date():
+                                next_earnings = parsed_dt.strftime("%Y-%m-%d")
+                        except Exception:
+                            pass
+
+                # Fiscal period & currency [R-02]
+                mrq_val = info.get("mostRecentQuarter")
+                period_end = None
+                fiscal_period = None
+                mrq_dt = _parse_date_or_ts(mrq_val)
+                if mrq_dt:
+                    period_end = mrq_dt.strftime("%Y-%m-%d")
+                    fiscal_period = f"Kỳ kết thúc (MRQ): {period_end}"
+
+                if not fiscal_period and "lastFiscalYearEnd" in info:
+                    lfye_val = info.get("lastFiscalYearEnd")
+                    lfye_dt = _parse_date_or_ts(lfye_val)
+                    if lfye_dt:
+                        period_end = lfye_dt.strftime("%Y-%m-%d")
+                        fiscal_period = f"Niên độ kết thúc (FYE): {period_end}"
+
+                retrieved_at = datetime.now().strftime("%Y-%m-%d")
+                currency = info.get("financialCurrency") or info.get("currency") or "USD"
+                rev_growth = info.get("revenueGrowth")
+                eps_growth = info.get("earningsGrowth")
+                data_status = "valid" if (rev_growth is not None or eps_growth is not None) else "partial"
+
+                clean_sym = sym.strip().upper()
+                sec_filing_url = f"https://www.sec.gov/edgar/browse/?CIK={clean_sym}"
 
                 return {
                     "symbol": sym,
                     "sector": sector,
                     "industry": industry,
-                    "revenue_growth": info.get("revenueGrowth"),
-                    "earnings_growth": info.get("earningsGrowth"),
+                    "revenue_growth": rev_growth,
+                    "earnings_growth": eps_growth,
                     "profit_margins": info.get("profitMargins"),
                     "operating_margins": info.get("operatingMargins"),
                     "operating_cashflow": info.get("operatingCashflow"),
                     "total_debt": info.get("totalDebt"),
                     "next_earnings_date": next_earnings,
                     "is_financial": is_financial,
+                    "period_end": period_end or "Chưa xác minh",
+                    "fiscal_period": fiscal_period or "Chưa xác định kỳ",
+                    "period_type": "Chỉ số tổng hợp Yahoo (YoY)",
+                    "currency": currency,
+                    "reported_date": None,
+                    "retrieved_at": retrieved_at,
+                    "source": "Yahoo Finance (Số liệu tổng hợp / Aggregate)",
+                    "data_status": data_status,
+                    "sec_filing_url": sec_filing_url,
                 }
             except Exception as e:
                 logger.warning(f"Error fetching fundamentals for {sym}: {e}")
-                return {
-                    "symbol": sym,
-                    "sector": "",
-                    "industry": "",
-                    "revenue_growth": None,
-                    "earnings_growth": None,
-                    "profit_margins": None,
-                    "operating_margins": None,
-                    "operating_cashflow": None,
-                    "total_debt": None,
-                    "next_earnings_date": "Chưa xác minh",
-                    "is_financial": False,
-                }
+                # Do not emit empty records that wipe out valid cached fundamentals [D-07]
+                return None
 
         results = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_sym = {executor.submit(_fetch_one, s): s for s in symbols}
             for future in as_completed(future_to_sym):
-                results.append(future.result())
+                res = future.result()
+                if res is not None:
+                    results.append(res)
 
         return results
+
+    def fetch_earnings_calendar(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 150
+    ) -> List[Dict[str, Any]]:
+        """Fetch upcoming earnings calendar events from Yahoo Finance."""
+        try:
+            cal = yf.Calendars()
+            df = cal.get_earnings_calendar(
+                start=start_date,
+                end=end_date,
+                limit=limit,
+                filter_most_active=False
+            )
+            if df is None or df.empty:
+                return []
+
+            df = df.reset_index()
+            # Normalize column names
+            records = []
+            for _, row in df.iterrows():
+                sym = str(row.get("Symbol") or row.get("index") or "").strip().upper()
+                if not sym:
+                    continue
+
+                event_dt = row.get("Event Start Date")
+                date_str = ""
+                if hasattr(event_dt, "strftime"):
+                    date_str = event_dt.strftime("%Y-%m-%d")
+                elif event_dt:
+                    date_str = str(event_dt)[:10]
+
+                timing = str(row.get("Timing") or "TNS").strip().upper()
+                if timing not in ("BMO", "AMC"):
+                    timing = "TNS"
+
+                eps_est = row.get("EPS Estimate")
+                rep_eps = row.get("Reported EPS")
+                surp = row.get("Surprise(%)")
+
+                records.append({
+                    "symbol": sym,
+                    "company_name": str(row.get("Company") or sym),
+                    "market_cap": float(row.get("Marketcap")) if pd.notna(row.get("Marketcap")) else None,
+                    "event_name": str(row.get("Event Name") or "Earnings Announcement"),
+                    "earnings_date": date_str,
+                    "timing": timing,
+                    "eps_estimate": float(eps_est) if pd.notna(eps_est) else None,
+                    "reported_eps": float(rep_eps) if pd.notna(rep_eps) else None,
+                    "surprise_pct": float(surp) if pd.notna(surp) else None,
+                })
+            return records
+        except Exception as e:
+            logger.warning(f"Error fetching earnings calendar from yfinance: {e}")
+            return []

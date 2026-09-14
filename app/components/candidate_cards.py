@@ -1,19 +1,44 @@
+import re
+import textwrap
 import streamlit as st
-from typing import Any, Dict, List
+import pandas as pd
+from typing import Any, Dict, List, Optional
+from analytics.market_calendar import get_remaining_trading_sessions_in_week
+from app.components.base_watchlist import (
+    render_base_watchlist,
+    render_base_metrics_grid,
+    format_base_summary_line
+)
+
+def render_html_safe(html_str: str):
+    """Render HTML safely without markdown code block indentation issues."""
+    clean_html = textwrap.dedent(html_str).strip()
+    if hasattr(st, "html"):
+        st.html(clean_html)
+    else:
+        st.markdown(clean_html, unsafe_allow_html=True)
 
 GROUP_TITLES = {
-    "long_cont": ("🚀 Long Tiếp Diễn (Trend Continuation)", "Cổ phiếu trong xu hướng tăng mạnh, vượt trội thị trường và đang có điểm pullback hoặc breakout kèm volume."),
-    "short_cont": ("🔻 Short Tiếp Diễn (Downtrend Continuation)", "Cổ phiếu trong xu hướng giảm rõ rệt, yếu hơn thị trường, xuất hiện nhịp hồi chạm kháng cự hoặc breakdown tiếp diễn."),
-    "long_rev": ("🔄 Long Đảo Chiều (Mean Reversion / Reversal)", "Cổ phiếu có dấu hiệu tạo đáy kỹ thuật sau chuỗi giảm sâu hoặc vượt trở lại trên MA20."),
-    "short_rev": ("⚠️ Short Đảo Chiều (Top Breakdown)", "Cổ phiếu tăng quá đà, xuất hiện suy yếu hoặc gãy MA20 báo hiệu đảo chiều giảm."),
-    "watchlist": ("👁️ Danh sách Theo Dõi (Watchlist)", "Mã có tín hiệu mâu thuẫn hoặc đang hình thành mẫu hình nhưng chưa đủ xác nhận kỹ thuật.")
+    "long_cont": ("Long Tiếp Diễn (Trend Continuation)", "Cổ phiếu trong xu hướng tăng mạnh, vượt trội thị trường và đang có điểm pullback hoặc breakout kèm volume."),
+    "short_cont": ("Short Tiếp Diễn (Downtrend Continuation)", "Cổ phiếu trong xu hướng giảm rõ rệt, yếu hơn thị trường, xuất hiện nhịp hồi chạm kháng cự hoặc breakdown tiếp diễn."),
+    "long_rev": ("Long Đảo Chiều (Mean Reversion / Reversal)", "Cổ phiếu có dấu hiệu tạo đáy kỹ thuật sau chuỗi giảm sâu hoặc vượt trở lại trên MA20."),
+    "short_rev": ("Short Đảo Chiều (Top Breakdown)", "Cổ phiếu tăng quá đà, xuất hiện suy yếu hoặc gãy MA20 báo hiệu đảo chiều giảm."),
+    "base_building": ("Đang Xây Nền (Base Building)", "Cổ phiếu đang tích lũy trong nền giá hẹp, biên độ và volume co hẹp trước điểm bứt phá."),
+    "watchlist": ("Danh sách Theo Dõi (Watchlist)", "Mã có tín hiệu mâu thuẫn hoặc đang hình thành mẫu hình nhưng chưa đủ xác nhận kỹ thuật.")
 }
 
-def render_candidate_card(cand: Dict[str, Any]):
-    """Render an individual candidate card with TA evidence, FA flags, and TradingView link."""
+def render_candidate_card(
+    cand: Dict[str, Any],
+    as_of: str = "",
+    repo: Optional[Any] = None,
+    key_suffix: str = "",
+    base_info: Optional[Dict[str, Any]] = None
+):
+    """Render an individual candidate card in utilitarian minimalist bento style."""
     sym = cand["symbol"]
     company = cand.get("company_name", sym)
     sector = cand.get("sector", "")
+    sub_ind = cand.get("sub_industry", "")
     price = cand.get("close_price", 0.0)
     p1d = cand.get("perf_1d", 0.0)
     p5d = cand.get("perf_5d", 0.0)
@@ -21,78 +46,516 @@ def render_candidate_card(cand: Dict[str, Any]):
     status = cand.get("status", "confirmed")
     reasons = cand.get("technical_reasons", [])
     fa_flags = cand.get("fa_flags", {})
+    if (not fa_flags or not isinstance(fa_flags, dict) or not fa_flags.get("has_data")) and repo is not None:
+        try:
+            from analytics.company_fa import evaluate_fa_flags
+            fa_df = repo.get_fundamentals([sym])
+            if not fa_df.empty:
+                fa_raw = fa_df.iloc[0].to_dict()
+                ref_d = as_of.split()[0] if as_of else None
+                fa_flags = evaluate_fa_flags(sym, fa_raw, ref_date=ref_d)
+        except Exception:
+            pass
+    if base_info is None and repo is not None:
+        try:
+            ref_d = as_of.split()[0] if as_of else None
+            last_b = repo.get_last_base_by_symbol(sym, before_date=None)
+            if last_b and (ref_d is None or str(last_b.get("as_of", "")) <= ref_d) and last_b.get("is_active"):
+                base_info = last_b
+        except Exception:
+            pass
     short_caveat = cand.get("short_caveat", "")
-    tv_url = cand.get("tv_url", f"https://www.tradingview.com/chart/?symbol={sym}")
+    tv_url = cand.get("tv_url") or f"https://www.tradingview.com/chart/?symbol={sym}&interval=D"
+    if "interval=" not in tv_url:
+        tv_url = f"{tv_url}{'&' if '?' in tv_url else '?'}interval=D"
+    score = cand.get("score", 0.0)
+    rank = cand.get("rank")
+    g_type = cand.get("group_type", "")
+    setup_type = cand.get("setup_type", "")
+    candle_pattern = cand.get("candle_pattern", "")
+    trig = cand.get("trigger_price")
+    inv = cand.get("invalidation_price")
+    atr14 = cand.get("atr14")
 
-    status_badge = "✅ Đã xác nhận kỹ thuật" if status == "confirmed" else "⏳ Đang theo dõi"
-    status_bg = "#c6f6d5" if status == "confirmed" else "#feebc8"
-    status_color = "#22543d" if status == "confirmed" else "#744210"
+    # Risk % computation
+    ref_entry = trig if (trig is not None and trig > 0) else price
+    risk_pct_str = "N/A"
+    if ref_entry and inv and ref_entry > 0:
+        side = "short" if "short" in g_type else "long"
+        if side == "long" and ref_entry > inv:
+            risk_pct = (ref_entry - inv) / ref_entry * 100.0
+            risk_pct_str = f"{risk_pct:.1f}%"
+        elif side == "short" and inv > ref_entry:
+            risk_pct = (inv - ref_entry) / ref_entry * 100.0
+            risk_pct_str = f"{risk_pct:.1f}%"
 
-    with st.container():
-        st.markdown(f"""
-        <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div>
-                    <span style="font-size: 20px; font-weight: bold; color: #1a202c;">{sym}</span>
-                    <span style="font-size: 14px; color: #718096; margin-left: 8px;">{company}</span>
-                    <span style="font-size: 12px; background: #edf2f7; color: #4a5568; padding: 2px 8px; border-radius: 12px; margin-left: 8px;">{sector}</span>
+    is_oneil = cand.get("is_oneil_leader", False)
+    oneil_badge_html = '<span style="font-size: 11.5px; font-weight: 600; background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 2px 8px; border-radius: 9999px; letter-spacing: 0.04em; text-transform: uppercase; margin-left: 6px;">Leader</span>' if is_oneil else ''
+
+    if status == "confirmed":
+        status_badge = "Triggered"
+        status_bg = "#EDF3EC"
+        status_color = "#346538"
+    elif status == "setup":
+        status_badge = "Setup"
+        status_bg = "#FBF3DB"
+        status_color = "#956400"
+    else:
+        status_badge = "Watchlist"
+        status_bg = "#F7F6F3"
+        status_color = "#787774"
+
+    rank_str = f"#{rank} · " if rank else ""
+    sub_ind_html = f'<span style="font-size: 12px; background: #F7F6F3; color: #787774; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 6px;">{sub_ind}</span>' if sub_ind else ''
+    sector_html = f'<span style="font-size: 12px; background: #F7F6F3; color: #555555; border: 1px solid #EAEAEA; padding: 2px 8px; border-radius: 9999px; margin-left: 8px;">{sector}</span>' if sector else ''
+    setup_badge_html = f'<span style="font-size: 11.5px; font-weight: 600; background: #E1F3FE; color: #1F6C9F; border: 1px solid #BAE6FD; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.03em; text-transform: uppercase; margin-left: 6px;">{setup_type}</span>' if setup_type else ''
+    candle_badge_html = f'<span style="font-size: 11.5px; color: #787774; background: #FAFAFA; border: 1px solid #EAEAEA; padding: 2px 7px; border-radius: 4px; margin-left: 6px;">{candle_pattern}</span>' if candle_pattern and candle_pattern != "-" else ''
+
+    color_1d = "#346538" if p1d >= 0 else "#9F2F2D"
+    color_5d = "#346538" if p5d >= 0 else "#9F2F2D"
+    color_20d = "#346538" if p20d >= 0 else "#9F2F2D"
+
+    trig_str = f"${trig:.2f}" if trig else "N/A"
+    inv_str = f"${inv:.2f}" if inv else "N/A"
+    atr_str = f"${atr14:.2f}" if atr14 else "N/A"
+    risk_style = 'color: #9F2F2D; font-weight: 600;' if risk_pct_str != 'N/A' else 'color: #787774;'
+
+    with st.container(border=True):
+        header_html = (
+            f'<div style="margin-bottom: 12px;">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">'
+            f'<div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">'
+            f'<span style="font-family: \'Geist Mono\', monospace; font-size: 20px; font-weight: 700; color: #111111;">{rank_str}{sym}</span>'
+            f'<span style="font-size: 15px; color: #787774; margin-left: 6px; font-weight: 500;">{company}</span>'
+            f'{sector_html}'
+            f'{sub_ind_html}'
+            f'{oneil_badge_html}'
+            f'{setup_badge_html}'
+            f'{candle_badge_html}'
+            f'</div>'
+            f'<div style="display: flex; align-items: center; gap: 10px;">'
+            f'<span style="font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774;">Score: <b style="color: #111111;">{score:+.1f}</b></span>'
+            f'<span style="font-size: 12px; font-weight: 600; background: {status_bg}; color: {status_color}; border: 1px solid #EAEAEA; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.04em; text-transform: uppercase;">{status_badge}</span>'
+            f'</div>'
+            f'</div>'
+            f'<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774; background: #F9F9F8; border: 1px solid #EAEAEA; border-radius: 6px; padding: 8px 14px;">'
+            f'<span><span style="color: #2F3437; font-weight: 600;">Giá: ${price:.2f}</span> (1D: <span style="color: {color_1d}; font-weight: 600;">{p1d:+.2f}%</span> &middot; 1W: <span style="color: {color_5d}; font-weight: 600;">{p5d:+.2f}%</span> &middot; 1M: <span style="color: {color_20d}; font-weight: 600;">{p20d:+.2f}%</span>)</span>'
+            f'<span style="color: #D1D5DB;">|</span>'
+            f'<span>Trigger: <b style="color: #111111;">{trig_str}</b></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Dừng lỗ: <b style="color: #111111;">{inv_str}</b></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>Rủi ro Stop: <span style="{risk_style}">{risk_pct_str}</span></span>'
+            f'<span style="color: #D1D5DB;">&middot;</span>'
+            f'<span>ATR14: <b style="color: #2F3437;">{atr_str}</b></span>'
+            f'</div>'
+            f'</div>'
+        )
+        render_html_safe(header_html)
+
+        if base_info:
+            summary_line = format_base_summary_line(base_info)
+            b_st_key = base_info.get("state", "forming")
+            from app.components.base_watchlist import STATE_LABELS
+            b_label = STATE_LABELS.get(b_st_key, (b_st_key,))[0]
+            base_badge_html = f"""
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                    <span style="font-size: 13px; font-weight: 600; color: #1E293B;">🧱 Thiết Lập Nền Giá (Base Building):</span>
+                    <span style="font-size: 11.5px; background: #EFF6FF; color: #1D4ED8; padding: 1px 6px; border-radius: 4px; font-weight: 600;">{b_label}</span>
                 </div>
-                <div>
-                    <span style="font-size: 12px; font-weight: bold; background: {status_bg}; color: {status_color}; padding: 3px 8px; border-radius: 6px;">{status_badge}</span>
-                </div>
+                <div style="font-size: 12.5px; color: #64748B;">{summary_line}</div>
             </div>
-            <div style="font-size: 14px; color: #4a5568; margin-bottom: 10px;">
-                <b>Giá:</b> ${price:.2f} | 
-                <b>1D:</b> <span style="color: {'#38a169' if p1d >= 0 else '#e53e3e'}">{p1d:+.2f}%</span> | 
-                <b>1W:</b> <span style="color: {'#38a169' if p5d >= 0 else '#e53e3e'}">{p5d:+.2f}%</span> | 
-                <b>1M:</b> <span style="color: {'#38a169' if p20d >= 0 else '#e53e3e'}">{p20d:+.2f}%</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """
+            render_html_safe(base_badge_html)
+            render_base_metrics_grid(base_info)
 
-        col_ta, col_fa, col_action = st.columns([5, 5, 2])
+        col_ta, col_fa, col_action = st.columns([4.6, 4.6, 2.8])
 
         with col_ta:
-            st.markdown("**📌 Bằng chứng Kỹ thuật (TA):**")
+            st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Bằng chứng Kỹ thuật (TA)</div>', unsafe_allow_html=True)
             if reasons:
                 for r in reasons:
-                    st.markdown(f"- {r}")
+                    if "O'Neil Leader" in r:
+                        st.markdown(f"<div style='font-size: 13px; color: #166534; background: #EDF3EC; border: 1px solid #D1E5D0; padding: 4px 8px; border-radius: 4px; margin-bottom: 5px;'>{r}</div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 4px;'>&bull; {r}</div>", unsafe_allow_html=True)
             else:
-                st.markdown("- Đạt tiêu chuẩn cấu trúc giá và sức mạnh tương đối.")
+                st.markdown("<div style='font-size: 13.5px; color: #787774;'>&bull; Đạt tiêu chuẩn cấu trúc giá và sức mạnh tương đối.</div>", unsafe_allow_html=True)
 
             if short_caveat:
-                st.caption(f"⚠️ *Lưu ý Short: {short_caveat}*")
+                st.markdown(f"<div style='font-size: 12.5px; color: #9F2F2D; background: #FDEBEC; border: 1px solid #F8D7DA; padding: 5px 10px; border-radius: 4px; margin-top: 6px;'><b>Lưu ý Short:</b> {short_caveat}</div>", unsafe_allow_html=True)
 
         with col_fa:
-            st.markdown("**🏢 Bối cảnh Doanh nghiệp & FA:**")
-            if fa_flags and isinstance(fa_flags, dict) and "next_earnings_date" in fa_flags:
-                earnings_date = fa_flags.get("next_earnings_date", "Chưa xác minh")
-                rev_g = fa_flags.get("revenue_growth")
-                eps_g = fa_flags.get("earnings_growth")
-                is_fin = fa_flags.get("is_financial", False)
+            st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Bối cảnh Doanh nghiệp & FA</div>', unsafe_allow_html=True)
+            if fa_flags and isinstance(fa_flags, dict) and fa_flags.get("has_data"):
+                days_earn = fa_flags.get("days_to_earnings")
+                next_earn = fa_flags.get("next_earnings_date")
 
-                st.markdown(f"- **Kỳ Earnings tiếp theo:** `{earnings_date}`")
-                if rev_g is not None:
-                    st.markdown(f"- Tăng trưởng Doanh thu: `{rev_g * 100:+.1f}%`")
-                if eps_g is not None:
-                    st.markdown(f"- Tăng trưởng EPS: `{eps_g * 100:+.1f}%`")
-                if is_fin:
-                    st.markdown("- *Định chế Tài chính / Ngân hàng (cơ cấu vốn đặc thù)*")
+                # 1. Dedicated earnings schedule & risk tag
+                if days_earn is not None and next_earn and next_earn != "Chưa xác minh":
+                    if 0 <= days_earn <= 14:
+                        earn_chip = f"<span style='background: #FDEBEC; color: #9F2F2D; border: 1px solid #F8D7DA; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 12px;'>⚠️ Còn {days_earn} ngày (Rủi ro biến động)</span>"
+                    else:
+                        earn_chip = f"<span style='background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 1px 6px; border-radius: 4px; font-weight: 500; font-size: 12px;'>Còn {days_earn} ngày (An toàn swing)</span>"
+                    st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; margin-bottom: 6px;'><b>BCTC tới:</b> {next_earn} &middot; {earn_chip}</div>", unsafe_allow_html=True)
+                elif next_earn and next_earn != "Chưa xác minh":
+                    st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; margin-bottom: 6px;'><b>BCTC dự kiến:</b> {next_earn}</div>", unsafe_allow_html=True)
+
+                # 2. Render flags without duplicate earnings or duplicate MRQ dates
+                flags_list = fa_flags.get("flags", [])
+                warning_chips = []
+                bullet_flags = []
+                for f in flags_list:
+                    # Skip earnings flag as it is already rendered cleanly above
+                    if any(kw in f for kw in ["Kỳ công bố Earnings", "RỦI RO BÁO CÁO TÀI CHÍNH", "Earnings: Lịch chưa"]):
+                        continue
+                    if "Cảnh báo" in f or "⚠️" in f:
+                        clean_f = f.replace("⚠️", "").replace("Cảnh báo:", "").strip()
+                        # Clean out redundant MRQ string
+                        clean_f = re.sub(r',\s*Kỳ kết thúc\s*\([^)]*\):?\s*[\d\-]+', '', clean_f)
+                        clean_f = re.sub(r',\s*nguồn\s*[^)]+', '', clean_f)
+                        warning_chips.append(clean_f)
+                    else:
+                        bullet_flags.append(f)
+
+                if warning_chips:
+                    chips_html = "".join([
+                        f"<span style='font-size: 12px; color: #9F2F2D; background: #FDEBEC; border: 1px solid #F8D7DA; padding: 2px 8px; border-radius: 4px; font-weight: 500; display: inline-block; margin: 2px 4px 4px 0;'>⚠️ {w}</span>"
+                        for w in warning_chips
+                    ])
+                    st.markdown(f"<div style='margin-bottom: 6px;'>{chips_html}</div>", unsafe_allow_html=True)
+
+                for bf in bullet_flags:
+                    st.markdown(f"<div style='font-size: 13.5px; color: #2F3437; line-height: 1.55; margin-bottom: 3px;'>&bull; {bf}</div>", unsafe_allow_html=True)
+
+                if not warning_chips and not bullet_flags and not next_earn:
+                    st.markdown("<div style='font-size: 13.5px; color: #787774;'>&bull; Chưa ghi nhận bất thường cơ bản.</div>", unsafe_allow_html=True)
+
+                # 3. Clean single metadata row
+                period_end = fa_flags.get("period_end")
+                fiscal_period = fa_flags.get("fiscal_period")
+                src_str = fa_flags.get("source", "Yahoo Finance (Số liệu tổng hợp / Aggregate)")
+                metrics = fa_flags.get("metrics", {})
+                p_margin = metrics.get('profit_margin_str', 'N/A')
+
+                period_label = period_end if (period_end and period_end != "Chưa xác minh") else fiscal_period
+                meta_parts = []
+                if period_label and period_label not in ("Chưa xác minh kỳ", "N/A"):
+                    meta_parts.append(f"Kỳ MRQ: <b>{period_label}</b>")
+                if p_margin and p_margin != "N/A":
+                    meta_parts.append(f"Biên ròng: <b>{p_margin}</b>")
+                meta_parts.append(f"Nguồn: {src_str}")
+
+                st.markdown(f"<div style='font-size: 12px; color: #787774; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #EAEAEA;'>{' &middot; '.join(meta_parts)}</div>", unsafe_allow_html=True)
             else:
-                st.markdown("- *Thông tin FA chưa nạp hoặc đang ở chế độ cache.*")
+                st.markdown("<div style='font-size: 13.5px; color: #787774;'>&bull; Chưa có dữ liệu FA trong cơ sở dữ liệu local (chờ chu kỳ cập nhật tiếp theo).</div>", unsafe_allow_html=True)
 
         with col_action:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.link_button(f"📈 TradingView {sym}", tv_url, type="primary")
+            st.markdown('<div class="editorial-label" style="margin-bottom: 8px;">Thao tác</div>', unsafe_allow_html=True)
+            card_btn_key = f"btn_card_detail_{sym}_{key_suffix}" if key_suffix else f"btn_card_detail_{sym}"
+            if st.button(f"Chi tiết {sym} →", key=card_btn_key, type="primary", use_container_width=True):
+                from app.components.setup_detail import show_setup_detail_dialog
+                show_setup_detail_dialog(cand, as_of=as_of, repo=repo, key_suffix=f"card_{sym}_{key_suffix}")
+            st.link_button(f"Chart {sym} ↗", tv_url, use_container_width=True)
+            sec_url = (fa_flags.get("sec_filing_url") if isinstance(fa_flags, dict) else None) or f"https://www.sec.gov/edgar/browse/?CIK={sym}"
+            st.link_button("Tra cứu SEC ↗", sec_url, use_container_width=True)
 
-        st.divider()
+def render_candidates_table(candidates: List[Dict[str, Any]], as_of: str = "", repo: Any = None):
+    """Render candidates as a compact, scannable table with proper numerical sorting."""
+    if not candidates:
+        return
 
-def render_candidates_section(candidates: List[Dict[str, Any]]):
+    table_data = []
+    for c in candidates:
+        fa = c.get("fa_flags", {})
+        earnings = fa.get("earnings_status", "Chưa xác minh") if isinstance(fa, dict) else "N/A"
+        rank_val = c.get("rank")
+
+        status_val = c.get("status")
+        if status_val == "confirmed":
+            status_label = "Triggered"
+        elif status_val == "setup":
+            status_label = "Setup"
+        else:
+            status_label = "Watchlist"
+
+        table_data.append({
+            "Hạng": rank_val if rank_val else 9999,
+            "Mã": c["symbol"],
+            "Doanh nghiệp": c.get("company_name", c["symbol"]),
+            "Setup": c.get("setup_type", "-"),
+            "Mẫu Nến": c.get("candle_pattern", "-"),
+            "Ngành": c.get("sector", ""),
+            "Nhóm nhỏ": c.get("sub_industry", ""),
+            "Trạng thái": status_label,
+            "Giá": float(c.get("close_price", 0.0)),
+            "Trigger": float(c.get("trigger_price")) if c.get("trigger_price") is not None else None,
+            "1D (%)": float(c.get("perf_1d", 0.0)),
+            "1W (%)": float(c.get("perf_5d", 0.0)),
+            "1M (%)": float(c.get("perf_20d", 0.0)),
+            "ATR14": float(c.get("atr14")) if c.get("atr14") is not None else None,
+            "Score": float(c.get("score", 0.0)),
+            "Leader": "Có" if c.get("is_oneil_leader") else "-",
+            "Kỳ Earnings": earnings,
+            "Chart": f"https://www.tradingview.com/chart/?symbol={c['symbol']}&interval=D"
+        })
+
+    df = pd.DataFrame(table_data)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Hạng": st.column_config.NumberColumn("Hạng", format="%d"),
+            "Giá": st.column_config.NumberColumn("Giá ($)", format="$%.2f"),
+            "Trigger": st.column_config.NumberColumn("Trigger ($)", format="$%.2f"),
+            "1D (%)": st.column_config.NumberColumn("1D (%)", format="%+.2f%%"),
+            "1W (%)": st.column_config.NumberColumn("1W (%)", format="%+.2f%%"),
+            "1M (%)": st.column_config.NumberColumn("1M (%)", format="%+.2f%%"),
+            "ATR14": st.column_config.NumberColumn("ATR14 ($)", format="$%.2f"),
+            "Score": st.column_config.NumberColumn("Score", format="%+.1f"),
+            "Chart": st.column_config.LinkColumn("TradingView", display_text="Mở Chart")
+        }
+    )
+
+def render_candidates_comparison(candidates: List[Dict[str, Any]], as_of: str = "", repo: Optional[Any] = None):
+    """Render side-by-side comparative analysis of 2 to 5 selected candidates."""
+    all_symbols = [c["symbol"] for c in candidates]
+    if len(all_symbols) < 2:
+        st.info("Cần ít nhất 2 ứng viên trong danh sách để so sánh.")
+        return
+
+    default_selected = all_symbols[:min(3, len(all_symbols))]
+    selected_syms = st.multiselect(
+        "Chọn 2 đến 5 mã cổ phiếu để so sánh trực diện:",
+        options=all_symbols,
+        default=default_selected,
+        max_selections=5,
+        key="cand_compare_multiselect"
+    )
+
+    if len(selected_syms) < 2:
+        st.warning("Vui lòng chọn từ 2 đến 5 mã cổ phiếu để hiển thị bảng so sánh.")
+        return
+
+    selected_cands = [c for c in candidates if c["symbol"] in selected_syms]
+    selected_cands.sort(key=lambda c: selected_syms.index(c["symbol"]))
+
+    cols = st.columns(len(selected_cands))
+    for idx, c in enumerate(selected_cands):
+        with cols[idx]:
+            sym = c["symbol"]
+            co_name = c.get("company_name", sym)
+            sec = c.get("sector", "")
+            sub = c.get("sub_industry", "")
+            g_type = c.get("group_type", "")
+            setup = c.get("setup_type", "")
+            is_leader = c.get("is_oneil_leader", False)
+            price = c.get("close_price", 0.0)
+            trig = c.get("trigger_price")
+            inv = c.get("invalidation_price")
+            p1d = c.get("perf_1d", 0.0)
+            p5d = c.get("perf_5d", 0.0)
+            p20d = c.get("perf_20d", 0.0)
+            score = c.get("score", 0.0)
+            atr14 = c.get("atr14")
+            atr_pct = c.get("atr_pct")
+
+            risk_pct_str = "N/A"
+            if trig and inv and trig > 0:
+                side = "short" if "short" in g_type else "long"
+                if side == "long" and trig > inv:
+                    risk_pct = (trig - inv) / trig * 100.0
+                    risk_pct_str = f"{risk_pct:.1f}%"
+                elif side == "short" and inv > trig:
+                    risk_pct = (inv - trig) / trig * 100.0
+                    risk_pct_str = f"{risk_pct:.1f}%"
+
+            fa_flags = c.get("fa_flags", {})
+            if (not fa_flags or not isinstance(fa_flags, dict) or not fa_flags.get("has_data")) and repo is not None:
+                try:
+                    from analytics.company_fa import evaluate_fa_flags
+                    fa_df = repo.get_fundamentals([sym])
+                    if not fa_df.empty:
+                        fa_raw = fa_df.iloc[0].to_dict()
+                        ref_d = as_of.split()[0] if as_of else None
+                        fa_flags = evaluate_fa_flags(sym, fa_raw, ref_date=ref_d)
+                except Exception:
+                    pass
+
+            evidence = c.get("evidence", {}) or {}
+            pressure = evidence.get("multi_session_pressure", {}) if isinstance(evidence, dict) else {}
+            pressure_bias = pressure.get("pressure_bias", "Chưa tính")
+
+            trig_str = f"${trig:.2f}" if (trig is not None and trig > 0) else "N/A"
+            inv_str = f"${inv:.2f}" if (inv is not None and inv > 0) else "N/A"
+            atr_pct_str = f"{atr_pct:.2f}%" if atr_pct is not None else "N/A"
+            risk_style = 'color: #9F2F2D; font-weight: 600;' if risk_pct_str != 'N/A' else 'color: #787774;'
+            leader_badge_html = '<span style="font-size: 11px; background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 2px 7px; border-radius: 4px; font-weight: 600; letter-spacing: 0.03em;">LEADER</span>' if is_leader else ''
+            p1d_col = "#346538" if p1d >= 0 else "#9F2F2D"
+            p5d_col = "#346538" if p5d >= 0 else "#9F2F2D"
+            p20d_col = "#346538" if p20d >= 0 else "#9F2F2D"
+            sub_info = f"{sec} &bull; {sub}" if (sec and sub) else (sec or sub or "-")
+
+            fa_section_html = '<div style="font-size: 13px; color: #787774;">Chưa có dữ liệu FA.</div>'
+            if fa_flags and isinstance(fa_flags, dict) and fa_flags.get("has_data"):
+                m = fa_flags.get("metrics", {})
+                rev_growth = m.get('rev_growth_str', 'N/A')
+                eps_growth = m.get('eps_growth_str', 'N/A')
+                p_margin = m.get('profit_margin_str', 'N/A')
+                days_earn = fa_flags.get("days_to_earnings")
+                next_earn = fa_flags.get("next_earnings_date")
+                p_end = fa_flags.get("period_end", "")
+
+                fa_parts = [
+                    f'<div style="font-size: 13px; color: #2F3437; margin-bottom: 3px;"><b>Doanh thu YoY:</b> {rev_growth} &bull; <b>EPS YoY:</b> {eps_growth}</div>',
+                    f'<div style="font-size: 13px; color: #2F3437; margin-bottom: 3px;"><b>Biên ròng:</b> {p_margin}</div>'
+                ]
+                if days_earn is not None and next_earn and next_earn != "Chưa xác minh":
+                    if 0 <= days_earn <= 14:
+                        earn_chip = f"<span style='background: #FDEBEC; color: #9F2F2D; border: 1px solid #F8D7DA; padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 11.5px;'>⚠️ Còn {days_earn} ngày</span>"
+                    else:
+                        earn_chip = f"<span style='background: #EDF3EC; color: #346538; border: 1px solid #D1E5D0; padding: 1px 6px; border-radius: 4px; font-weight: 500; font-size: 11.5px;'>Còn {days_earn} ngày</span>"
+                    fa_parts.append(f'<div style="font-size: 12.5px; color: #2F3437; margin-top: 4px;"><b>BCTC:</b> {next_earn} &middot; {earn_chip}</div>')
+                elif p_end:
+                    fa_parts.append(f'<div style="font-size: 12px; color: #787774; margin-top: 4px;">Kỳ BCTC: {p_end} (Yahoo Aggregate)</div>')
+
+                fa_section_html = "".join(fa_parts)
+
+            card_html = (
+                f'<div style="border: 1px solid #EAEAEA; border-radius: 6px; padding: 14px; background: #FFFFFF; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">'
+                f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">'
+                f'<span style="font-family: \'Geist Mono\', monospace; font-size: 18px; font-weight: 700; color: #111111;">{sym}</span>'
+                f'{leader_badge_html}'
+                f'</div>'
+                f'<div style="font-size: 13px; color: #787774; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{co_name}">{co_name}</div>'
+                f'<div style="font-size: 12px; color: #555555; background: #F7F6F3; padding: 4px 8px; border-radius: 4px; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{sub_info}</div>'
+                f'<div style="font-size: 11.5px; font-weight: 600; color: #787774; text-transform: uppercase; margin-bottom: 5px; letter-spacing: 0.03em;">Kỹ Thuật &amp; Setup</div>'
+                f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Setup:</b> {setup} <span style="color: #787774;">({g_type})</span></div>'
+                f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Giá đóng cửa:</b> ${price:.2f}</div>'
+                f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Trigger:</b> <span style="font-weight: 600;">{trig_str}</span></div>'
+                f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Dừng lỗ:</b> <span style="font-weight: 600;">{inv_str}</span></div>'
+                f'<div style="font-size: 13px; margin-bottom: 8px;"><b>Rủi ro Stop:</b> <span style="{risk_style}">{risk_pct_str}</span></div>'
+                f'<div style="font-size: 11.5px; font-weight: 600; color: #787774; text-transform: uppercase; margin-bottom: 5px; margin-top: 10px; letter-spacing: 0.03em;">Hiệu Suất &amp; Điểm Số</div>'
+                f'<div style="font-size: 13px; margin-bottom: 3px;">'
+                f'1D: <span style="color: {p1d_col}; font-weight: 600;">{p1d:+.2f}%</span> &bull; '
+                f'1W: <span style="color: {p5d_col}; font-weight: 600;">{p5d:+.2f}%</span> &bull; '
+                f'1M: <span style="color: {p20d_col}; font-weight: 600;">{p20d:+.2f}%</span>'
+                f'</div>'
+                f'<div style="font-size: 13px; margin-bottom: 8px;">Score: <b>{score:+.1f}</b> &bull; ATR%: <b>{atr_pct_str}</b></div>'
+                f'<div style="font-size: 11.5px; font-weight: 600; color: #787774; text-transform: uppercase; margin-bottom: 5px; margin-top: 10px; letter-spacing: 0.03em;">Áp Lực Đa Phiên</div>'
+                f'<div style="font-size: 13px; color: #2F3437; margin-bottom: 8px;">{pressure_bias}</div>'
+                f'<div style="font-size: 11.5px; font-weight: 600; color: #787774; text-transform: uppercase; margin-bottom: 5px; margin-top: 10px; letter-spacing: 0.03em;">Bối Cảnh Doanh Nghiệp (FA)</div>'
+                f'{fa_section_html}'
+                f'</div>'
+            )
+            render_html_safe(card_html)
+
+            if st.button(f"Chi tiết {sym} →", key=f"btn_cmp_detail_{sym}", type="primary", use_container_width=True):
+                from app.components.setup_detail import show_setup_detail_dialog
+                show_setup_detail_dialog(c, as_of=as_of, repo=repo, key_suffix=f"cmp_{sym}")
+
+            tv_link = f"https://www.tradingview.com/chart/?symbol={sym}&interval=D"
+            st.link_button(f"Mở Chart {sym} ↗", tv_link, use_container_width=True, key=f"btn_tv_cmp_{sym}")
+
+
+def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "", repo: Any = None, snapshot_id: Optional[int] = None):
     """Render candidates partitioned by the 4 groups + watchlist."""
-    st.subheader("🎯 4 Nhóm Ứng Viên Giao Dịch (Swing Candidates)", divider="gray")
+    st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">4 Nhóm Ứng Viên Giao Dịch (Swing Candidates)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="editorial-sub">Phân loại ứng viên theo pha chu kỳ và điểm kích hoạt vào lệnh (Continuation & Reversal).</div>', unsafe_allow_html=True)
 
     if not candidates:
-        st.info("ℹ️ **Không có mã nào đạt điều kiện trong kỳ phân tích này.** Thị trường đang ở pha phân hóa hoặc không thỏa mãn tiêu chí kỹ thuật. (Hệ thống không ép đủ số lượng mã).")
+        st.info("Không có mã nào đạt điều kiện trong kỳ phân tích này. Thị trường đang ở pha phân hóa hoặc không thỏa mãn tiêu chí kỹ thuật.")
+        return
+
+    # Remaining trading sessions in week check
+    rem_sessions = get_remaining_trading_sessions_in_week(as_of)
+    if rem_sessions <= 1:
+        st.warning(
+            f"⚠️ **Cảnh báo chu kỳ tuần ({as_of.split()[0] if as_of else 'Phiên này'}):** Tuần hiện tại chỉ còn **{rem_sessions} phiên giao dịch**. "
+            f"Theo quy tắc giao dịch ngắn 'không giữ lệnh qua tuần', các vị thế mở mới cần ưu tiên chốt trước cuối tuần hoặc hoãn sang đầu tuần sau để tránh rủi ro vắt qua cuối tuần (`crosses_weekend`)."
+        )
+
+    # Controls
+    f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns([2.0, 1.2, 1.1, 1.3, 1.2])
+    with f_col1:
+        search_sym = st.text_input("Tìm kiếm mã:", placeholder="Nhập AAPL, MSFT, NVDA...", key="cand_search_input").strip().lower()
+
+    with f_col2:
+        view_mode = st.selectbox("Chế độ hiển thị:", ["Dạng Thẻ (Cards)", "Bảng Rút Gọn"], index=0, key="cand_view_mode")
+
+    with f_col3:
+        only_leader = st.checkbox("Chỉ Leaders", value=False, key="cand_only_leaders", help="Chỉ hiển thị cổ phiếu thuộc nhóm ngành dẫn dắt (Top 20% Composite RS)")
+
+    with f_col4:
+        week_filter = st.selectbox(
+            "Lọc Chu Kỳ Tuần:",
+            ["Tất cả phiên", "Tuần còn ≥ 2 phiên", "Tuần còn ≥ 3 phiên"],
+            index=0,
+            key="cand_week_filter",
+            help="Lọc cơ hội mở vị thế theo số phiên giao dịch còn lại của tuần để tránh rủi ro vắt qua cuối tuần (crosses_weekend)."
+        )
+
+    with f_col5:
+        as_of_tag = as_of.split()[0] if as_of else "latest"
+        csv_candidates = [
+            {
+                "symbol": c["symbol"],
+                "company_name": c.get("company_name", c["symbol"]),
+                "group_type": c.get("group_type"),
+                "setup_type": c.get("setup_type"),
+                "status": c.get("status"),
+                "score": c.get("score"),
+                "rank": c.get("rank"),
+                "close_price": c.get("close_price"),
+                "trigger_price": c.get("trigger_price"),
+                "invalidation_price": c.get("invalidation_price"),
+                "perf_1d": c.get("perf_1d"),
+                "perf_5d": c.get("perf_5d"),
+                "perf_20d": c.get("perf_20d"),
+                "atr14": c.get("atr14"),
+                "is_oneil_leader": c.get("is_oneil_leader", False),
+                "sector": c.get("sector"),
+                "sub_industry": c.get("sub_industry"),
+            }
+            for c in candidates
+        ]
+        csv_df = pd.DataFrame(csv_candidates)
+        csv_data = csv_df.to_csv(index=False)
+        st.download_button(
+            label="Xuất CSV 📥",
+            data=csv_data,
+            file_name=f"market_radar_candidates_{as_of_tag}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="btn_dl_cand_csv"
+        )
+
+    # Side-by-side comparison expander
+    with st.expander("⚖️ So sánh Trực diện 2–5 Ứng viên (Side-by-Side)", expanded=False):
+        render_candidates_comparison(candidates, as_of=as_of, repo=repo)
+
+    display_candidates = candidates
+    if only_leader:
+        display_candidates = [c for c in display_candidates if c.get("is_oneil_leader")]
+
+    if search_sym:
+        display_candidates = [
+            c for c in display_candidates
+            if search_sym in c["symbol"].lower() or search_sym in c.get("company_name", "").lower()
+        ]
+
+    # Apply remaining sessions filter
+    if week_filter == "Tuần còn ≥ 2 phiên" and rem_sessions < 2:
+        st.info(f"Tuần hiện tại chỉ còn {rem_sessions} phiên giao dịch (< 2 phiên). Các vị thế swing mới có nguy cơ vắt qua cuối tuần; danh sách đã được ẩn theo tiêu chí lọc.")
+        return
+    elif week_filter == "Tuần còn ≥ 3 phiên" and rem_sessions < 3:
+        st.info(f"Tuần hiện tại chỉ còn {rem_sessions} phiên giao dịch (< 3 phiên). Đã lọc ẩn danh sách swing theo tiêu chí số phiên còn lại.")
+        return
+
+    if not display_candidates:
+        st.info("Không có ứng viên nào thỏa mãn điều kiện lọc hiện tại.")
         return
 
     # Group candidates
@@ -103,28 +566,106 @@ def render_candidates_section(candidates: List[Dict[str, Any]]):
         "short_rev": [],
         "watchlist": []
     }
-    for c in candidates:
+    for c in display_candidates:
         g = c.get("group_type", "watchlist")
         if g in grouped:
             grouped[g].append(c)
         else:
             grouped["watchlist"].append(c)
 
-    tabs = st.tabs([
-        f"🚀 Long Tiếp Diễn ({len(grouped['long_cont'])})",
-        f"🔻 Short Tiếp Diễn ({len(grouped['short_cont'])})",
-        f"🔄 Long Đảo Chiều ({len(grouped['long_rev'])})",
-        f"⚠️ Short Đảo Chiều ({len(grouped['short_rev'])})",
-        f"👁️ Watchlist ({len(grouped['watchlist'])})"
-    ])
+    base_records = repo.get_base_snapshots(snapshot_id=snapshot_id, as_of=as_of) if repo else []
+    base_map = {b["symbol"]: b for b in base_records}
+    sub_keys = ["long_cont", "short_cont", "long_rev", "short_rev", "base_building", "watchlist"]
+    sub_labels = {
+        "long_cont": f"Long Tiếp Diễn ({len(grouped['long_cont'])})",
+        "short_cont": f"Short Tiếp Diễn ({len(grouped['short_cont'])})",
+        "long_rev": f"Long Đảo Chiều ({len(grouped['long_rev'])})",
+        "short_rev": f"Short Đảo Chiều ({len(grouped['short_rev'])})",
+        "base_building": f"🧱 Đang Xây Nền ({len(base_records)})",
+        "watchlist": f"Theo Dõi ({len(grouped['watchlist'])})"
+    }
 
-    for i, (g_key, tab) in enumerate(zip(["long_cont", "short_cont", "long_rev", "short_rev", "watchlist"], tabs)):
-        with tab:
-            title, desc = GROUP_TITLES[g_key]
-            st.markdown(f"**{desc}**")
-            group_cands = grouped[g_key]
-            if not group_cands:
-                st.info(f"Không có cổ phiếu nào thỏa mãn điều kiện cho nhóm **{title}** trong snapshot hiện tại.")
+    selected_sub = st.segmented_control(
+        "Nhóm Ứng Viên",
+        options=sub_keys,
+        format_func=lambda k: sub_labels[k],
+        default="long_cont",
+        label_visibility="collapsed",
+        key="cand_subgroup_nav"
+    ) if hasattr(st, "segmented_control") else st.radio(
+        "Nhóm Ứng Viên",
+        options=sub_keys,
+        format_func=lambda k: sub_labels[k],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="cand_subgroup_nav"
+    )
+    if not selected_sub:
+        selected_sub = "long_cont"
+
+    g_key = selected_sub
+    title, desc = GROUP_TITLES[g_key]
+
+    if g_key == "base_building":
+        render_base_watchlist(base_records, as_of=as_of, repo=repo)
+        return
+
+    st.markdown(f"<div style='font-size: 13.5px; color: #787774; margin-bottom: 16px; margin-top: 12px;'>{desc}</div>", unsafe_allow_html=True)
+    group_cands = grouped[g_key]
+    if not group_cands:
+        st.info(f"Không có cổ phiếu nào thỏa mãn điều kiện cho nhóm {title} trong snapshot hiện tại.")
+    else:
+        if view_mode == "Bảng Rút Gọn":
+            render_candidates_table(group_cands, as_of=as_of, repo=repo)
+            st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
+            sel_sym = st.selectbox(
+                f"Xem chi tiết Setup & Mẫu Nến ({title}):",
+                ["-- Chọn mã để xem chi tiết kỹ thuật --"] + [c["symbol"] for c in group_cands],
+                key=f"sel_detail_table_{g_key}"
+            )
+            if sel_sym and sel_sym != "-- Chọn mã để xem chi tiết kỹ thuật --":
+                cand_item = next((c for c in group_cands if c["symbol"] == sel_sym), None)
+                if cand_item:
+                    with st.expander(f"Chi tiết Setup & Mức kỹ thuật: {sel_sym}", expanded=True):
+                        from app.components.setup_detail import render_setup_detail_modal
+                        render_setup_detail_modal(cand_item, as_of=as_of, repo=repo, key_suffix=f"tbl_{g_key}_{sel_sym}")
+        else:
+            # Quick selector for modal inspection
+            sel_sym = st.selectbox(
+                f"Mở modal xem chi tiết Setup & Mức kỹ thuật ({title}):",
+                ["-- Chọn mã cần mở chi tiết --"] + [c["symbol"] for c in group_cands],
+                key=f"sel_detail_cards_{g_key}"
+            )
+            if sel_sym and sel_sym != "-- Chọn mã cần mở chi tiết --":
+                cand_item = next((c for c in group_cands if c["symbol"] == sel_sym), None)
+                if cand_item:
+                    from app.components.setup_detail import show_setup_detail_dialog
+                    show_setup_detail_dialog(cand_item, as_of=as_of, repo=repo, key_suffix=f"sel_{g_key}_{sel_sym}")
+
+            # Clean pagination for cards
+            page_size = 15
+            total_pages = (len(group_cands) + page_size - 1) // page_size
+            page_options = [
+                f"Trang {p}/{total_pages} (Mã {(p-1)*page_size + 1} - {min(p*page_size, len(group_cands))})"
+                for p in range(1, total_pages + 1)
+            ]
+            if total_pages > 1:
+                chosen_page_label = st.selectbox(
+                    f"Trang hiển thị ({len(group_cands)} mã):",
+                    page_options,
+                    key=f"page_cards_{g_key}"
+                )
+                c_page = page_options.index(chosen_page_label) + 1
+                start_i = (c_page - 1) * page_size
+                page_cands = group_cands[start_i : start_i + page_size]
             else:
-                for c in group_cands:
-                    render_candidate_card(c)
+                page_cands = group_cands
+
+            for idx, c in enumerate(page_cands):
+                render_candidate_card(
+                    c,
+                    as_of=as_of,
+                    repo=repo,
+                    key_suffix=f"{g_key}_{idx}",
+                    base_info=base_map.get(c["symbol"])
+                )

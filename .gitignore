@@ -10,10 +10,17 @@ venv/
 ENV/
 
 # Database
+*.db
+*.db.bak
+*.db-journal
+*.db-wal
+*.db-shm
 data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
+data/*.db.bak
+storage/*.db
+storage/*.db.bak
+data/
+!data/.gitkeep
 
 # Testing
 .pytest_cache/

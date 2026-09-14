@@ -28,3 +28,4 @@ def test_live_database_snapshots():
         assert "group_type" in c
         assert "tv_url" in c
         assert "https://www.tradingview.com" in c["tv_url"]
+        assert "interval=D" in c["tv_url"]
