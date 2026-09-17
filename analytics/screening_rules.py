@@ -16,6 +16,7 @@ from config.settings import (
 from config.sector_mappings import SECTOR_ETF_MAP
 from analytics.company_fa import evaluate_fa_flags
 from analytics.setup_analyzer import analyze_candidate_setup
+from analytics.candidate_quality import evaluate_quality
 
 logger = logging.getLogger(__name__)
 
@@ -454,4 +455,6 @@ def screen_candidates(
 
     # Sort each group by score descending (no forced quotas)
     final_candidates = sorted(candidates_raw, key=lambda x: x["score"], reverse=True)
+    for candidate in final_candidates:
+        candidate["evidence_json"]["review_quality"] = evaluate_quality(candidate)
     return final_candidates

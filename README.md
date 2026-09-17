@@ -31,6 +31,9 @@ pytest tests/ -v
 ```
 
 ### Tài liệu hướng dẫn sử dụng
+- **Bộ lọc chất lượng ứng viên (`review-v1`, 17/09/2026):** Trang Ứng viên mặc định chỉ hiện tối đa 10 mã vượt gate xác nhận OHLC/volume, vị trí giá, thanh khoản, khoảng tới vô hiệu, khoảng trống tới cản và lịch BCTC; tối đa 2 mã/nhóm ngành nhỏ. Có thể chuyển sang Đạt bộ lọc / Chờ xác nhận / Không ưu tiên / Toàn bộ. Bảng, thẻ và CSV có lý do cùng rủi ro tham chiếu; score scanner gốc vẫn giữ để đối chiếu. Xem [quy tắc, giả định và audit](docs/setup-quality-review-2026-09-17.md).
+  - Ngưỡng nằm trong `analytics/candidate_quality.py::QualityPolicy`: tối đa 1 ATR từ trigger, 2 ATR từ MA20 theo chiều giao dịch; risk ≤2,5 ATR và ≤6%; khoảng trống/risk ≥1,5; dollar volume ≥$10M; earnings >7 ngày. Đây là ngưỡng rà soát ban đầu, chưa chứng minh cải thiện lợi nhuận.
+  - Thiếu cản phía trước (thường gặp ở breakout) hoặc thiếu lịch BCTC chuyển sang chờ; không tự tạo target. Snapshot cũ được đánh giá lại bằng phiên bản lọc hiện tại. Scanner, tín hiệu lịch sử và Outcomes vẫn đo tập ứng viên gốc; chưa phải báo cáo hiệu quả shortlist.
 - [📘 Hướng dẫn chi tiết từng tính năng (Feature Manual)](docs/HUONG_DAN_CHI_TIET_TINH_NANG.md): Tra cứu toàn diện giao diện, công thức kỹ thuật, các ngưỡng định lượng, 3 trụ cột điều hướng, bảng tham chiếu và nguyên tắc dữ liệu 0 đồng.
 - [📗 Cẩm nang theo kịch bản sử dụng (Scenario Playbook)](docs/KICH_BAN_SU_DUNG.md): Hướng dẫn thực chiến 8 kịch bản (15 phút trước giờ mở cửa, săn Breakout, bắt đáy Mean Reversion, bán khống Downtrend, quản lý rủi ro mùa BCTC, rà soát cuối tuần, kiểm toán Alpha tín hiệu và vận hành dữ liệu).
 

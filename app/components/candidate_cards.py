@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 from typing import Any, Dict, List, Optional
 from analytics.market_calendar import get_remaining_trading_sessions_in_week
+from analytics.candidate_quality import rank_for_review, select_shortlist, TIER_LABELS, DEFAULT_POLICY
 from app.components.base_watchlist import (
     render_base_watchlist,
     render_base_metrics_grid,
@@ -76,8 +77,19 @@ def render_candidate_card(
     inv = cand.get("invalidation_price")
     atr14 = cand.get("atr14")
 
+    quality = cand.get("quality")
+    if quality:
+        st.caption(f"Ưu tiên #{cand.get('review_rank', '—')} · {quality['label']}")
+        st.caption(" · ".join(quality["reasons"]))
+        risk = quality.get("risk_pct")
+        room = quality.get("room_risk")
+        st.caption(
+            f"Rủi ro tham chiếu: {f'{risk:.1f}%' if risk is not None else 'N/A'} · "
+            f"Khoảng trống/rủi ro: {f'{room:.2f}' if room is not None else 'N/A'}"
+        )
+
     # Risk % computation
-    ref_entry = trig if (trig is not None and trig > 0) else price
+    ref_entry = quality.get("entry_reference") if quality else (trig if (trig is not None and trig > 0) else price)
     risk_pct_str = "N/A"
     if ref_entry and inv and ref_entry > 0:
         side = "short" if "short" in g_type else "long"
@@ -144,7 +156,7 @@ def render_candidate_card(
             f'<span style="color: #D1D5DB;">&middot;</span>'
             f'<span>Dừng lỗ: <b style="color: #111111;">{inv_str}</b></span>'
             f'<span style="color: #D1D5DB;">&middot;</span>'
-            f'<span>Rủi ro Stop: <span style="{risk_style}">{risk_pct_str}</span></span>'
+            f'<span>Rủi ro tham chiếu: <span style="{risk_style}">{risk_pct_str}</span></span>'
             f'<span style="color: #D1D5DB;">&middot;</span>'
             f'<span>ATR14: <b style="color: #2F3437;">{atr_str}</b></span>'
             f'</div>'
@@ -286,8 +298,14 @@ def render_candidates_table(candidates: List[Dict[str, Any]], as_of: str = "", r
             status_label = "Watchlist"
 
         table_data.append({
-            "Hạng": rank_val if rank_val else 9999,
+            "Ưu tiên": c.get("review_rank"),
             "Mã": c["symbol"],
+            "Chất lượng": TIER_LABELS.get(c.get("quality_tier"), "Chưa đánh giá"),
+            "Lý do xét lọc": c.get("quality_reasons", ""),
+            "Rủi ro (%)": c.get("risk_pct"),
+            "Rủi ro (ATR)": c.get("risk_atr"),
+            "Khoảng trống/R": c.get("room_risk"),
+            "Hạng": rank_val if rank_val else 9999,
             "Doanh nghiệp": c.get("company_name", c["symbol"]),
             "Setup": c.get("setup_type", "-"),
             "Mẫu Nến": c.get("candle_pattern", "-"),
@@ -312,6 +330,11 @@ def render_candidates_table(candidates: List[Dict[str, Any]], as_of: str = "", r
         use_container_width=True,
         hide_index=True,
         column_config={
+            "Ưu tiên": st.column_config.NumberColumn("Ưu tiên", format="%d"),
+            "Lý do xét lọc": st.column_config.TextColumn("Lý do xét lọc", width="large"),
+            "Rủi ro (%)": st.column_config.NumberColumn("Rủi ro (%)", format="%.2f"),
+            "Rủi ro (ATR)": st.column_config.NumberColumn("Rủi ro (ATR)", format="%.2f"),
+            "Khoảng trống/R": st.column_config.NumberColumn("Khoảng trống/R", format="%.2f"),
             "Hạng": st.column_config.NumberColumn("Hạng", format="%d"),
             "Giá": st.column_config.NumberColumn("Giá ($)", format="$%.2f"),
             "Trigger": st.column_config.NumberColumn("Trigger ($)", format="$%.2f"),
@@ -368,7 +391,10 @@ def render_candidates_comparison(candidates: List[Dict[str, Any]], as_of: str = 
             atr_pct = c.get("atr_pct")
 
             risk_pct_str = "N/A"
-            if trig and inv and trig > 0:
+            if c.get("quality"):
+                review_risk = c["quality"].get("risk_pct")
+                risk_pct_str = f"{review_risk:.1f}%" if review_risk is not None else "N/A"
+            elif trig and inv and trig > 0:
                 side = "short" if "short" in g_type else "long"
                 if side == "long" and trig > inv:
                     risk_pct = (trig - inv) / trig * 100.0
@@ -441,7 +467,7 @@ def render_candidates_comparison(candidates: List[Dict[str, Any]], as_of: str = 
                 f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Giá đóng cửa:</b> ${price:.2f}</div>'
                 f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Trigger:</b> <span style="font-weight: 600;">{trig_str}</span></div>'
                 f'<div style="font-size: 13px; margin-bottom: 3px;"><b>Dừng lỗ:</b> <span style="font-weight: 600;">{inv_str}</span></div>'
-                f'<div style="font-size: 13px; margin-bottom: 8px;"><b>Rủi ro Stop:</b> <span style="{risk_style}">{risk_pct_str}</span></div>'
+                f'<div style="font-size: 13px; margin-bottom: 8px;"><b>Rủi ro tham chiếu:</b> <span style="{risk_style}">{risk_pct_str}</span></div>'
                 f'<div style="font-size: 11.5px; font-weight: 600; color: #787774; text-transform: uppercase; margin-bottom: 5px; margin-top: 10px; letter-spacing: 0.03em;">Hiệu Suất &amp; Điểm Số</div>'
                 f'<div style="font-size: 13px; margin-bottom: 3px;">'
                 f'1D: <span style="color: {p1d_col}; font-weight: 600;">{p1d:+.2f}%</span> &bull; '
@@ -521,6 +547,32 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
                 st.rerun()
 
     # Controls: Priority Table view by default
+    candidates = rank_for_review(candidates)
+    quality_counts = {tier: sum(c["quality_tier"] == tier for c in candidates) for tier in TIER_LABELS}
+    st.caption(
+        f"{len(candidates)} setup / {len({c['symbol'] for c in candidates})} mã → "
+        + " · ".join(f"{TIER_LABELS[tier]}: {count}" for tier, count in quality_counts.items())
+    )
+    quality_col, diversity_col = st.columns([3, 2])
+    with quality_col:
+        quality_view = st.selectbox(
+            "Mức chất lượng:",
+            ["Ưu tiên (tối đa 10 mã)", "Đạt bộ lọc", "Chờ xác nhận", "Không ưu tiên", "Toàn bộ"],
+            key="cand_quality_view",
+        )
+    with diversity_col:
+        diversify = st.checkbox("Tối đa 2 mã mỗi nhóm ngành nhỏ", value=True, key="cand_quality_diversify",
+                                  help="Áp dụng cho danh sách ưu tiên; giảm lặp ngành, chưa đo tương quan giá.")
+    with st.expander("Tiêu chí chất lượng & cách đọc", expanded=False):
+        p = DEFAULT_POLICY
+        st.write(
+            f"Xác nhận bằng OHLC/volume theo từng setup; giá chưa chạy quá {p.max_trigger_atr:g} ATR từ trigger "
+            f"và {p.max_ma20_atr:g} ATR từ MA20 theo chiều giao dịch; giá trị giao dịch trung bình ≥ ${p.min_dollar_volume/1e6:g}M. "
+            f"Khoảng tới vô hiệu ≤ {p.max_risk_atr:g} ATR và ≤ {p.max_risk_pct:g}%; "
+            f"khoảng trống đến cản/rủi ro ≥ {p.min_room_risk:g}; BCTC cách hơn {p.earnings_days} ngày."
+        )
+        st.write("Điểm vào tham chiếu lấy giá bất lợi hơn giữa close và trigger. Thiếu cản phía trước hoặc lịch BCTC → chờ kiểm tra; không tự tạo target. Khoảng trống/R chưa tính phí và trượt giá, không phải lợi nhuận kỳ vọng.")
+        st.caption(f"{p.version}: ngưỡng rà soát ban đầu, chưa kiểm định lợi nhuận. Áp dụng lại trên evidence của snapshot đang xem; hạng/score scanner gốc được giữ để đối chiếu. Xếp ưu tiên theo chất lượng, khoảng trống/R (chặn tại 5), risk ATR rồi score gốc.")
     f_col1, f_col2, f_col3, f_col4 = st.columns([2.0, 1.2, 1.1, 1.3])
     with f_col1:
         search_sym = st.text_input("Tìm kiếm mã hoặc công ty:", placeholder="Nhập AAPL, MSFT, NVDA...", key="cand_search_input").strip().lower()
@@ -554,6 +606,11 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
             if search_sym in c["symbol"].lower() or search_sym in c.get("company_name", "").lower()
         ]
 
+    if quality_view == "Ưu tiên (tối đa 10 mã)":
+        display_candidates = select_shortlist(display_candidates, industry_limit=2 if diversify else None)
+    elif quality_view in TIER_LABELS.values():
+        display_candidates = [c for c in display_candidates if TIER_LABELS[c["quality_tier"]] == quality_view]
+
     # Apply remaining sessions filter
     if week_filter == "Tuần còn ≥ 2 phiên" and rem_sessions < 2:
         st.info(f"Tuần hiện tại chỉ còn {rem_sessions} phiên giao dịch (< 2 phiên). Các vị thế swing mới có nguy cơ vắt qua cuối tuần; danh sách đã được ẩn theo tiêu chí lọc.")
@@ -570,6 +627,8 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
         "close_price", "trigger_price", "invalidation_price", "atr14", "atr_pct",
         "perf_1d", "perf_5d", "perf_20d"
     ]
+    export_cols += ["review_rank", "quality_tier", "quality_version", "quality_reasons",
+                    "entry_reference", "risk_pct", "risk_atr", "room_risk"]
 
     def _build_csv_data(cand_list):
         if not cand_list:
@@ -600,11 +659,10 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
 
     # Side-by-side comparison expander scoped to current view
     with st.expander("⚖️ So sánh Trực diện 2–5 Ứng viên (Side-by-Side)", expanded=False):
-        compare_pool = display_candidates if len(display_candidates) >= 2 else candidates
-        render_candidates_comparison(compare_pool, as_of=as_of, repo=repo)
+        render_candidates_comparison(display_candidates, as_of=as_of, repo=repo)
 
     if not display_candidates:
-        st.info("Không có ứng viên nào thỏa mãn điều kiện lọc hiện tại.")
+        st.info("Không có ứng viên nào thỏa mãn điều kiện lọc hiện tại. Chọn ‘Chờ xác nhận’ hoặc ‘Toàn bộ’ để xem nguyên nhân; hệ thống không ép đủ số mã ưu tiên.")
         return
 
     # Group candidates into 4 tactical groups + contradiction watchlist
