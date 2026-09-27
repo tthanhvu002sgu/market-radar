@@ -285,7 +285,11 @@ class MarketRadarRepository:
                             json.dumps(c.get("checklist", []), ensure_ascii=False) if c.get("checklist") else "[]",
                             json.dumps(c.get("evidence_json", {}), ensure_ascii=False) if c.get("evidence_json") else "{}",
                             c.get("signal_key", ""),
-                            c.get("candle_pattern", "Không rõ mẫu hình")
+                            c.get("candle_pattern", "Không rõ mẫu hình"),
+                            c.get("market_context_alignment", "chưa đủ dữ liệu"),
+                            c.get("market_context_summary", ""),
+                            c.get("rs_rating"),
+                            c.get("rs_vs_spy")
                         ))
 
                 if cand_records:
@@ -299,8 +303,9 @@ class MarketRadarRepository:
                             invalidation_condition, support_level, support_basis, resistance_level,
                             resistance_basis, atr14, atr_pct, dist_trigger_pct, dist_trigger_atr,
                             dist_ma20_pct, dist_ma20_atr, avg_dollar_vol20, rel_volume,
-                            weekly_context, checklist, evidence_json, signal_key, candle_pattern
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            weekly_context, checklist, evidence_json, signal_key, candle_pattern,
+                            market_context_alignment, market_context_summary, rs_rating, rs_vs_spy
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, cand_records)
 
             return snapshot_id
@@ -443,6 +448,8 @@ class MarketRadarRepository:
                 c["evidence_json"] = json.loads(c["evidence_json"]) if c.get("evidence_json") else {}
                 c["candle_pattern"] = c.get("candle_pattern") or c["evidence_json"].get("candlestick", {}).get("features", {}).get("pattern", "Không rõ mẫu hình")
                 c["candlestick_analysis"] = c["evidence_json"].get("candlestick", {})
+                c["market_context_alignment"] = c.get("market_context_alignment") or "chưa đủ dữ liệu"
+                c["market_context_summary"] = c.get("market_context_summary") or ""
                 candidates.append(c)
             return candidates
         finally:
@@ -1267,4 +1274,396 @@ class MarketRadarRepository:
         finally:
             conn.close()
 
+    # --- Review Theses & Group Selection History [D-02] ---
+    def save_review_thesis(
+        self,
+        session_date: str,
+        target_type: str,
+        target_name: str,
+        selection_reason: str,
+        source: str = "",
+        reviewer: str = "User"
+    ) -> int:
+        """Save user thesis / rationale for selecting a sector, sub-industry or theme."""
+        now_str = datetime.now().isoformat()
+        conn = self._conn()
+        try:
+            with conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO review_theses (
+                        session_date, target_type, target_name, selection_reason, source, reviewer, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(session_date, target_type, target_name) DO UPDATE SET
+                        selection_reason = excluded.selection_reason,
+                        source = excluded.source,
+                        reviewer = excluded.reviewer,
+                        updated_at = excluded.updated_at
+                """, (session_date, target_type, target_name, selection_reason, source, reviewer, now_str, now_str))
+                return cur.lastrowid or 1
+        finally:
+            conn.close()
+
+    def get_review_theses(
+        self,
+        session_date: Optional[str] = None,
+        target_type: Optional[str] = None,
+        target_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieve review theses by session_date, target_type, or target_name."""
+        conn = self._conn()
+        try:
+            query = "SELECT * FROM review_theses"
+            conditions, params = [], []
+            if session_date:
+                conditions.append("session_date = ?")
+                params.append(session_date)
+            if target_type:
+                conditions.append("target_type = ?")
+                params.append(target_type)
+            if target_name:
+                conditions.append("target_name = ?")
+                params.append(target_name)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY updated_at DESC"
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # --- Themes & Symbol Themes [D-02] ---
+    def save_theme(self, theme_name: str, description: str = "") -> int:
+        """Create or update a cross-industry market theme."""
+        now_str = datetime.now().isoformat()
+        conn = self._conn()
+        try:
+            with conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO themes (theme_name, description, created_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(theme_name) DO UPDATE SET description = excluded.description
+                """, (theme_name, description, now_str))
+                return cur.lastrowid or 1
+        finally:
+            conn.close()
+
+    def get_themes(self) -> List[Dict[str, Any]]:
+        """List all defined cross-industry themes."""
+        conn = self._conn()
+        try:
+            rows = conn.execute("SELECT * FROM themes ORDER BY theme_name ASC").fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def save_symbol_theme(
+        self,
+        symbol: str,
+        theme_name: str,
+        source: str,
+        effective_date: str,
+        verified_by: str,
+        notes: str = "",
+        status: str = "active"
+    ) -> int:
+        """Attach a symbol to a theme with mandatory audit trail (source, effective_date, verified_by)."""
+        now_str = datetime.now().isoformat()
+        conn = self._conn()
+        try:
+            with conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO symbol_themes (
+                        symbol, theme_name, source, effective_date, verified_by, status, notes, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, theme_name, effective_date) DO UPDATE SET
+                        source = excluded.source,
+                        verified_by = excluded.verified_by,
+                        status = excluded.status,
+                        notes = excluded.notes
+                """, (symbol, theme_name, source, effective_date, verified_by, status, notes, now_str))
+                return cur.lastrowid or 1
+        finally:
+            conn.close()
+
+    def get_symbol_themes(
+        self,
+        symbol: Optional[str] = None,
+        theme_name: Optional[str] = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Query symbol-theme relations with verification details."""
+        conn = self._conn()
+        try:
+            query = "SELECT * FROM symbol_themes"
+            conditions, params = [], []
+            if symbol:
+                conditions.append("symbol = ?")
+                params.append(symbol)
+            if theme_name:
+                conditions.append("theme_name = ?")
+                params.append(theme_name)
+            if active_only:
+                conditions.append("status = 'active'")
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY effective_date DESC, symbol ASC"
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # --- Frozen Shortlist [D-04] ---
+    def save_frozen_shortlist(
+        self,
+        snapshot_id: int,
+        session_date: str,
+        policy_version: str,
+        shortlist: List[Dict[str, Any]]
+    ) -> int:
+        """Freeze actual shortlist candidates with snapshot reference and policy version."""
+        now_str = datetime.now().isoformat()
+        shortlist = shortlist or []
+        conn = self._conn()
+        try:
+            with conn:
+                cur = conn.cursor()
+                # Persist metadata run
+                cur.execute("""
+                    INSERT INTO frozen_shortlist_metadata (
+                        snapshot_id, session_date, policy_version, total_shortlist, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, policy_version) DO UPDATE SET
+                        session_date = excluded.session_date,
+                        total_shortlist = excluded.total_shortlist,
+                        created_at = excluded.created_at
+                """, (snapshot_id, session_date, policy_version, len(shortlist), now_str))
+
+                records = []
+                for idx, c in enumerate(shortlist, 1):
+                    records.append((
+                        snapshot_id,
+                        session_date,
+                        policy_version,
+                        c["symbol"],
+                        int(c.get("review_rank") or idx),
+                        c.get("group_type", ""),
+                        c.get("setup_type", ""),
+                        float(c.get("entry_reference") or 0.0) if c.get("entry_reference") is not None else None,
+                        float(c.get("trigger_price") or 0.0) if c.get("trigger_price") is not None else None,
+                        float(c.get("invalidation_price") or 0.0) if c.get("invalidation_price") is not None else None,
+                        float(c.get("room_risk") or 0.0) if c.get("room_risk") is not None else None,
+                        c.get("quality_tier", "ready"),
+                        c.get("quality_reasons", ""),
+                        c.get("market_context_alignment", "chưa đủ dữ liệu"),
+                        now_str
+                    ))
+                if records:
+                    cur.executemany("""
+                        INSERT INTO frozen_shortlists (
+                            snapshot_id, session_date, policy_version, symbol, review_rank,
+                            group_type, setup_type, entry_reference, trigger_price, invalidation_price,
+                            room_risk, quality_tier, quality_reasons, market_context_alignment, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(snapshot_id, symbol, policy_version) DO UPDATE SET
+                            review_rank = excluded.review_rank,
+                            entry_reference = excluded.entry_reference,
+                            trigger_price = excluded.trigger_price,
+                            invalidation_price = excluded.invalidation_price,
+                            room_risk = excluded.room_risk,
+                            quality_tier = excluded.quality_tier,
+                            quality_reasons = excluded.quality_reasons,
+                            market_context_alignment = excluded.market_context_alignment
+                    """, records)
+                return len(records)
+        finally:
+            conn.close()
+
+    def has_frozen_shortlist(
+        self,
+        snapshot_id: Optional[int] = None,
+        session_date: Optional[str] = None,
+        policy_version: Optional[str] = None
+    ) -> bool:
+        """Check if a frozen shortlist run was recorded for snapshot / session / policy."""
+        conn = self._conn()
+        try:
+            # Check metadata table first
+            query = "SELECT COUNT(*) FROM frozen_shortlist_metadata"
+            conditions, params = [], []
+            if snapshot_id is not None:
+                conditions.append("snapshot_id = ?")
+                params.append(snapshot_id)
+            if session_date:
+                conditions.append("session_date = ?")
+                params.append(session_date)
+            if policy_version:
+                conditions.append("policy_version = ?")
+                params.append(policy_version)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+
+            cnt = conn.execute(query, params).fetchone()[0]
+            if cnt > 0:
+                return True
+
+            # Fallback to frozen_shortlists table
+            query2 = "SELECT COUNT(*) FROM frozen_shortlists"
+            if conditions:
+                query2 += " WHERE " + " AND ".join(conditions)
+            cnt2 = conn.execute(query2, params).fetchone()[0]
+            return cnt2 > 0
+        finally:
+            conn.close()
+
+    def get_frozen_shortlist(
+        self,
+        session_date: Optional[str] = None,
+        snapshot_id: Optional[int] = None,
+        policy_version: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieve frozen shortlist for a session or snapshot."""
+        conn = self._conn()
+        try:
+            query = "SELECT * FROM frozen_shortlists"
+            conditions, params = [], []
+            if session_date:
+                conditions.append("session_date = ?")
+                params.append(session_date)
+            if snapshot_id is not None:
+                conditions.append("snapshot_id = ?")
+                params.append(snapshot_id)
+            if policy_version:
+                conditions.append("policy_version = ?")
+                params.append(policy_version)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY review_rank ASC, symbol ASC"
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # --- Trade Decisions & Execution Log [D-04] ---
+    def save_trade_decision(
+        self,
+        session_date: str,
+        symbol: str,
+        decision: str,
+        decision_reason: str = "",
+        plan_entry_price: Optional[float] = None,
+        plan_stop_price: Optional[float] = None,
+        plan_target_price: Optional[float] = None,
+        plan_shares: Optional[int] = None,
+        observed_trigger_price: Optional[float] = None,
+        observed_trigger_time: Optional[str] = None,
+        actual_fill_price: Optional[float] = None,
+        actual_fill_date: Optional[str] = None,
+        actual_fill_shares: Optional[int] = None,
+        actual_fill_notes: str = "",
+        reviewer: str = "User",
+        snapshot_id: Optional[int] = None
+    ) -> int:
+        """Record or update user decision (chọn / chờ / bỏ qua), trade plan, observed trigger, and actual fill."""
+        now_str = datetime.now().isoformat()
+        conn = self._conn()
+        try:
+            with conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO trade_decisions (
+                        session_date, snapshot_id, symbol, decision, decision_reason,
+                        plan_entry_price, plan_stop_price, plan_target_price, plan_shares,
+                        observed_trigger_price, observed_trigger_time,
+                        actual_fill_price, actual_fill_date, actual_fill_shares, actual_fill_notes,
+                        reviewer, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(session_date, symbol) DO UPDATE SET
+                        snapshot_id = COALESCE(excluded.snapshot_id, trade_decisions.snapshot_id),
+                        decision = excluded.decision,
+                        decision_reason = excluded.decision_reason,
+                        plan_entry_price = COALESCE(excluded.plan_entry_price, trade_decisions.plan_entry_price),
+                        plan_stop_price = COALESCE(excluded.plan_stop_price, trade_decisions.plan_stop_price),
+                        plan_target_price = COALESCE(excluded.plan_target_price, trade_decisions.plan_target_price),
+                        plan_shares = COALESCE(excluded.plan_shares, trade_decisions.plan_shares),
+                        observed_trigger_price = COALESCE(excluded.observed_trigger_price, trade_decisions.observed_trigger_price),
+                        observed_trigger_time = COALESCE(excluded.observed_trigger_time, trade_decisions.observed_trigger_time),
+                        actual_fill_price = COALESCE(excluded.actual_fill_price, trade_decisions.actual_fill_price),
+                        actual_fill_date = COALESCE(excluded.actual_fill_date, trade_decisions.actual_fill_date),
+                        actual_fill_shares = COALESCE(excluded.actual_fill_shares, trade_decisions.actual_fill_shares),
+                        actual_fill_notes = COALESCE(excluded.actual_fill_notes, trade_decisions.actual_fill_notes),
+                        reviewer = excluded.reviewer,
+                        updated_at = excluded.updated_at
+                """, (
+                    session_date, snapshot_id, symbol, decision, decision_reason,
+                    plan_entry_price, plan_stop_price, plan_target_price, plan_shares,
+                    observed_trigger_price, observed_trigger_time,
+                    actual_fill_price, actual_fill_date, actual_fill_shares, actual_fill_notes,
+                    reviewer, now_str, now_str
+                ))
+                return cur.lastrowid or 1
+        finally:
+            conn.close()
+
+    def get_trade_decisions(
+        self,
+        session_date: Optional[str] = None,
+        symbol: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieve trade decisions and execution notes."""
+        conn = self._conn()
+        try:
+            query = "SELECT * FROM trade_decisions"
+            conditions, params = [], []
+            if session_date:
+                conditions.append("session_date = ?")
+                params.append(session_date)
+            if symbol:
+                conditions.append("symbol = ?")
+                params.append(symbol)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY updated_at DESC, symbol ASC"
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def save_workflow_review(self, review: Dict[str, Any]) -> int:
+        """Append one snapshot-bound review path, including a no-action outcome."""
+        if review.get("outcome") not in {"continue", "wait", "no_action"}:
+            raise ValueError("Invalid workflow outcome")
+        if not str(review.get("reason") or "").strip():
+            raise ValueError("Review reason is required")
+        conn = self._conn()
+        try:
+            with conn:
+                cur = conn.execute("""
+                    INSERT INTO workflow_reviews (
+                        snapshot_id, session_date, sector, industry, symbol, group_type,
+                        setup_type, outcome, stop_stage, reason, evidence_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    review["snapshot_id"], review["session_date"], review.get("sector"),
+                    review.get("industry"), review.get("symbol"), review.get("group_type"),
+                    review.get("setup_type"), review["outcome"], review.get("stop_stage"),
+                    review["reason"].strip(), json.dumps(review.get("evidence") or {}, ensure_ascii=False),
+                    datetime.now().isoformat(),
+                ))
+                return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_workflow_reviews(self, snapshot_id: int) -> List[Dict[str, Any]]:
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM workflow_reviews WHERE snapshot_id = ? ORDER BY id DESC",
+                (snapshot_id,),
+            ).fetchall()
+            return [{**dict(row), "evidence": json.loads(row["evidence_json"])} for row in rows]
+        finally:
+            conn.close()
 

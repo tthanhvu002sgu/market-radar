@@ -64,7 +64,11 @@ def _render_stock_pills(stocks: List[Dict[str, Any]], limit: int = 5) -> str:
 
     return "".join(pills_html)
 
-def render_industry_heatmap(industry_metrics: List[Dict[str, Any]]):
+def render_industry_heatmap(
+    industry_metrics: List[Dict[str, Any]],
+    as_of: str = "",
+    repo: Optional[Any] = None
+):
     """
     Render William O'Neil CANSLIM Industry Groups Ranking Matrix & Heatmap.
     Styled according to the Utilitarian Minimalism & Editorial protocol.
@@ -330,7 +334,7 @@ def render_industry_heatmap(industry_metrics: List[Dict[str, Any]]):
     st.caption("*: Nhóm ngành có mẫu nhỏ (≤ 2 cổ phiếu trong S&P 500). Cột 1Y hiển thị N/A khi chưa đủ 253 phiên đóng cửa.")
 
     # Cross-navigation to Candidates
-    all_sub_names = sorted([g["industry"] for g in industry_data if g.get("industry")])
+    all_sub_names = sorted([g["industry"] for g in industry_metrics if g.get("industry")])
     if all_sub_names:
         st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
         c_hm_sel1, c_hm_sel2 = st.columns([3, 2])
@@ -347,3 +351,39 @@ def render_industry_heatmap(industry_metrics: List[Dict[str, Any]]):
                     st.session_state["cand_sub_industry_filter"] = chosen_sub
                     st.session_state["cand_nav_from"] = {"page": "Nhóm ngành", "label": f"Nhóm {chosen_sub}"}
                     st.rerun()
+
+        # Thesis & Reason Logging for Selected Sub-Industry [D-2]
+        if chosen_sub and chosen_sub != "-- Chọn nhóm ngành để lọc ứng viên --":
+            as_of_clean = as_of.split()[0] if as_of else ""
+            with st.expander(f"📝 Hồ Sơ Luận Điểm Chọn Nhóm {chosen_sub} (Session Thesis)", expanded=False):
+                sub_theses = repo.get_review_theses(session_date=as_of_clean, target_type="sub_industry", target_name=chosen_sub) if repo else []
+                latest_thesis = sub_theses[0] if sub_theses else {}
+
+                with st.form(key=f"form_sub_industry_thesis_{chosen_sub}"):
+                    st.markdown(f"<b>Ghi nhận lý do lựa chọn nhóm ngành {chosen_sub} trong phiên {as_of_clean}:</b>", unsafe_allow_html=True)
+                    thesis_text = st.text_area(
+                        "Luận điểm / Lý do chọn nhóm ngành này để tìm kiếm ứng viên:",
+                        value=latest_thesis.get("selection_reason", ""),
+                        placeholder="VD: Nhóm ngành bứt phá trong top 10 RS, tích lũy nền giá chặt chẽ, thanh khoản đột biến...",
+                        height=80
+                    )
+                    c_t1, c_t2 = st.columns(2)
+                    with c_t1:
+                        src_input = st.text_input("Nguồn / Động lực:", value=latest_thesis.get("source", "CANSLIM / O'Neil Matrix"), key=f"src_sub_{chosen_sub}")
+                    with c_t2:
+                        rev_input = st.text_input("Người rà soát:", value=latest_thesis.get("reviewer", "User"), key=f"rev_sub_{chosen_sub}")
+
+                    saved_btn = st.form_submit_button("💾 Lưu Luận Điểm Chọn Nhóm Ngành")
+                    if saved_btn and repo:
+                        try:
+                            repo.save_review_thesis(
+                                session_date=as_of_clean,
+                                target_type="sub_industry",
+                                target_name=chosen_sub,
+                                selection_reason=thesis_text,
+                                source=src_input,
+                                reviewer=rev_input
+                            )
+                            st.success(f"Đã lưu luận điểm cho nhóm ngành {chosen_sub} trong phiên {as_of_clean}.")
+                        except Exception as th_err:
+                            st.error(f"Lỗi khi lưu luận điểm: {th_err}")

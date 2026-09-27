@@ -63,6 +63,28 @@ def render_setup_detail_modal(
     group_title = group_labels.get(group_type, group_type)
 
     # Header section
+    themes_list = repo.get_symbol_themes(symbol=sym) if (repo and hasattr(repo, "get_symbol_themes")) else []
+    themes_html = ""
+    if themes_list:
+        badges = " ".join([
+            f'<span style="background: #EBF3FB; color: #1D6FB8; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;" title="Nguồn: {t.get("source")} | Hiệu lực: {t.get("effective_date")} | Xác nhận: {t.get("verified_by")}">🏷️ {t.get("theme_name")}</span>'
+            for t in themes_list
+        ])
+        themes_html = f'<div style="margin-top: 6px;"><b>Themes:</b> {badges}</div>'
+
+    ctx_align = candidate.get("market_context_alignment", "chưa đủ dữ liệu")
+    ctx_sum = candidate.get("market_context_summary", "")
+    if ctx_align == "phù hợp":
+        align_badge = '<span style="background: #EDF3EC; color: #346538; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Thuận bối cảnh thị trường</span>'
+    elif ctx_align == "mâu thuẫn":
+        align_badge = '<span style="background: #FDEBEC; color: #9F2F2D; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Mâu thuẫn bối cảnh thị trường</span>'
+    elif ctx_align == "phân hóa / trung tính":
+        align_badge = '<span style="background: #FEF3D6; color: #8F6B00; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Thị trường phân hóa / Trung tính</span>'
+    else:
+        align_badge = '<span style="background: #F1F1EF; color: #787774; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Chưa đủ dữ liệu bối cảnh</span>'
+
+    ctx_html = f'<div style="margin-top: 6px; font-size: 13px; color: #787774;"><b>Bối cảnh thị trường:</b> {align_badge} {ctx_sum}</div>'
+
     _render_html(f"""
     <div style="background-color: #FFFFFF; border: 1px solid #EAEAEA; border-radius: 8px; padding: 20px 24px; margin-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px;">
@@ -75,6 +97,8 @@ def render_setup_detail_modal(
                     <span><b>Ngành:</b> {sector} &middot; {sub_industry}</span>
                     <span style="margin-left: 12px;"><b>Nhóm:</b> {group_title}</span>
                 </div>
+                {themes_html}
+                {ctx_html}
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <a href="{tv_url}" target="_blank" style="text-decoration: none;">
@@ -241,12 +265,17 @@ def render_setup_detail_modal(
 
     st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
 
-    # 3-Tab internal navigation: Technical & Candle, Company & FA, Checklist
-    tab_tech, tab_fa, tab_check = st.tabs([
+    # 4-Tab internal navigation: Technical & Candle, Company & FA, Checklist, Plan & Risk
+    tabs = st.tabs([
         "📈 Kỹ Thuật & Mẫu Nến",
         "🏢 Doanh Nghiệp & BCTC",
-        "✅ Checklist Điều Kiện"
+        "✅ Checklist Điều Kiện",
+        "💼 Phiếu Kế Hoạch & Rủi Ro Vốn"
     ])
+    tab_tech = tabs[0] if len(tabs) > 0 else st.container()
+    tab_fa = tabs[1] if len(tabs) > 1 else st.container()
+    tab_check = tabs[2] if len(tabs) > 2 else st.container()
+    tab_plan = tabs[3] if len(tabs) > 3 else st.container()
 
     # --- TAB 1: KỸ THUẬT & MẪU NẾN ---
     with tab_tech:
@@ -594,6 +623,193 @@ def render_setup_detail_modal(
 
         st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
         st.link_button(f"Mở toàn màn hình biểu đồ {sym} trên TradingView ↗", tv_url, use_container_width=True)
+
+    # --- TAB 4: PHIẾU KẾ HOẠCH & QUẢN TRỊ RỦI RO VỐN [D-3, D-4] ---
+    with tab_plan:
+        st.markdown('<div style="font-size: 16px; font-weight: 600; color: #111111; margin: 12px 0 8px 0;">Phiếu Kế Hoạch Vị Thế & Quản Trị Rủi Ro Vốn (Trade Planning Ticket)</div>', unsafe_allow_html=True)
+        st.caption("Khác biệt giữa Rủi ro Kỹ thuật (setup risk %) và Rủi ro Tài khoản (portfolio risk $): Kích thước vị thế (position size) quyết định mức tổn thất thực tế. Radar không tự gán mức rủi ro phù hợp cho tài khoản.")
+
+        ref_entry = candidate.get("entry_reference") or candidate.get("close_price") or 0.0
+        ref_inv = candidate.get("invalidation_price") or 0.0
+        side_val = -1 if "short" in group_type else 1
+
+        existing_dec = {}
+        if repo:
+            try:
+                decs = repo.get_trade_decisions(session_date=as_of_clean, symbol=sym)
+                if decs:
+                    existing_dec = decs[0] or {}
+            except Exception:
+                existing_dec = {}
+
+        c_p1, c_p2 = st.columns(2)
+        with c_p1:
+            user_capital = st.number_input(
+                "Vốn tài khoản / Danh mục ($):",
+                min_value=1_000.0,
+                max_value=100_000_000.0,
+                value=100_000.0,
+                step=5_000.0,
+                key=f"plan_cap_{sym}_{key_suffix}"
+            )
+            user_risk_pct = st.number_input(
+                "Ngân sách rủi ro tối đa cho lệnh (% vốn):",
+                min_value=0.1,
+                max_value=10.0,
+                value=1.0,
+                step=0.25,
+                key=f"plan_risk_pct_{sym}_{key_suffix}",
+                help="Tỷ lệ vốn bạn chấp nhận mất nếu giá chạm mức dừng lỗ vô hiệu (invalidation)."
+            )
+        with c_p2:
+            user_exposure = st.number_input(
+                "Exposure hiện có của danh mục ($):",
+                min_value=0.0,
+                max_value=100_000_000.0,
+                value=0.0,
+                step=5_000.0,
+                key=f"plan_exp_{sym}_{key_suffix}"
+            )
+            max_alloc_pct = st.number_input(
+                "Trần phân bổ vốn tối đa cho 1 vị thế (% vốn):",
+                min_value=1.0,
+                max_value=100.0,
+                value=20.0,
+                step=5.0,
+                key=f"plan_max_alloc_{sym}_{key_suffix}",
+                help="Giới hạn an toàn nhằm tránh tập trung vốn quá mức vào một cổ phiếu duy nhất."
+            )
+
+        active_entry = float(existing_dec.get("plan_entry_price") or ref_entry or 0.0)
+        active_inv = float(existing_dec.get("plan_stop_price") or ref_inv or 0.0)
+        active_shares = existing_dec.get("plan_shares")
+
+        from analytics.candidate_quality import calculate_trade_plan
+        plan_calc = calculate_trade_plan(
+            entry_price=active_entry,
+            invalidation_price=active_inv,
+            account_capital=user_capital,
+            risk_budget_pct=user_risk_pct,
+            current_exposure_usd=user_exposure,
+            max_capital_pct=max_alloc_pct,
+            side=side_val,
+            shares=active_shares
+        )
+
+        if plan_calc["is_valid"]:
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Số cổ phiếu dự kiến", f"{plan_calc['planned_shares']:,} cp")
+            m2.metric("Giá trị vị thế ($)", f"${plan_calc['planned_position_val']:,.2f}", f"{plan_calc['capital_allocation_pct']}% vốn")
+            m3.metric("Rủi ro nếu chạm SL ($)", f"${plan_calc['dollar_risk']:,.2f}", f"{plan_calc['account_risk_pct']}% vốn")
+            m4.metric("Khoảng cách tới SL", f"${plan_calc['per_share_risk']:.2f}/cp", f"{plan_calc['setup_risk_pct']}%")
+
+            if plan_calc.get("warnings"):
+                for w in plan_calc["warnings"]:
+                    st.warning(f"⚠️ {w}")
+
+            _render_html(f"""
+            <div style="background: #F7F6F3; border: 1px solid #EAEAEA; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #787774; margin: 12px 0;">
+                <b>Tổng Exposure sau giải ngân:</b> ${plan_calc['new_total_exposure']:,.2f} ({plan_calc['total_exposure_pct']}% vốn) &middot;
+                <b>Trần phân bổ tối đa:</b> {max_alloc_pct}% &middot;
+                <b>Trạng thái trần vốn:</b> <span style="color: {'#9F2F2D' if plan_calc['is_over_capital_limit'] else '#346538'}; font-weight: 600;">{'VƯỢT TRẦN' if plan_calc['is_over_capital_limit'] else 'TRONG HẠN MỨC'}</span>
+            </div>
+            """)
+        else:
+            st.warning(f"Chưa thể lập phiếu kế hoạch: {plan_calc.get('error')}")
+
+        st.caption(f"ℹ️ {plan_calc.get('disclaimer')}")
+
+        # --- SỔ QUYẾT ĐỊNH & THỰC HIỆN GIAO DỊCH (DECISION JOURNAL) [D-04] ---
+        st.markdown('<div style="font-size: 15px; font-weight: 600; color: #111111; margin: 20px 0 8px 0;">Sổ Quyết Định & Theo Dõi Thực Thi (Execution Journal)</div>', unsafe_allow_html=True)
+        st.caption("Lưu trữ quyết định của bạn đối với ứng viên này, phân định rõ: Kế hoạch (Plan) vs Trigger quan sát được vs Khớp thực tế (Actual Fill).")
+
+        curr_choice = existing_dec.get("decision", "cho")
+        choice_idx = 0 if curr_choice == "chon" else 1 if curr_choice == "cho" else 2
+
+        with st.form(key=f"form_trade_decision_{sym}_{key_suffix}"):
+            fd_col1, fd_col2 = st.columns([2, 3])
+            with fd_col1:
+                dec_radio = st.radio(
+                    "Quyết định của bạn:",
+                    options=["chon", "cho", "bo_qua"],
+                    format_func=lambda x: "🟢 Chọn (Select & Plan)" if x == "chon" else "🟡 Chờ (Wait & Standby)" if x == "cho" else "🔴 Bỏ qua (Pass / Reject)",
+                    index=choice_idx,
+                    key=f"radio_dec_{sym}_{key_suffix}"
+                )
+                reviewer_input = st.text_input("Người rà soát (Reviewer):", value=existing_dec.get("reviewer", "User"))
+            with fd_col2:
+                dec_reason = st.text_area(
+                    "Lý do quyết định / Luận điểm thực thi:",
+                    value=existing_dec.get("decision_reason", ""),
+                    placeholder="Ghi nhận lý do chọn giải ngân hoặc nguyên nhân bỏ qua...",
+                    height=95
+                )
+
+            st.markdown("<div style='font-size: 13.5px; font-weight: 600; color: #111111; margin: 8px 0 4px 0;'>Chi Tiết Thực Thi (Phân định: Kế hoạch vs Trigger vs Fill thực tế):</div>", unsafe_allow_html=True)
+            p_col1, p_col2, p_col3 = st.columns(3)
+            with p_col1:
+                st.markdown("<b>1. Kế Hoạch (Plan)</b>", unsafe_allow_html=True)
+                plan_entry_in = st.number_input("Giá vào kế hoạch ($):", value=float(existing_dec.get("plan_entry_price") or ref_entry or 0.0), key=f"pe_{sym}_{key_suffix}")
+                plan_stop_in = st.number_input("Dừng lỗ kế hoạch ($):", value=float(existing_dec.get("plan_stop_price") or ref_inv or 0.0), key=f"ps_{sym}_{key_suffix}")
+                plan_tgt_in = st.number_input("Mục tiêu kế hoạch ($):", value=float(existing_dec.get("plan_target_price") or candidate.get("resistance_level") or 0.0), key=f"pt_{sym}_{key_suffix}")
+                plan_shares_in = st.number_input("Số cổ phiếu kế hoạch:", value=int(existing_dec.get("plan_shares") or plan_calc.get("planned_shares") or 0), step=1, key=f"psh_{sym}_{key_suffix}")
+            with p_col2:
+                st.markdown("<b>2. Trigger Quan Sát</b>", unsafe_allow_html=True)
+                obs_trig_in = st.number_input("Giá trigger quan sát ($):", value=float(existing_dec.get("observed_trigger_price") or candidate.get("trigger_price") or 0.0), key=f"ot_{sym}_{key_suffix}")
+                obs_time_in = st.text_input("Thời điểm trigger quan sát:", value=str(existing_dec.get("observed_trigger_time") or ""), placeholder="VD: 10:15 AM EST", key=f"ott_{sym}_{key_suffix}")
+            with p_col3:
+                st.markdown("<b>3. Khớp Lệnh Thực Tế (Fill)</b>", unsafe_allow_html=True)
+                fill_p_in = st.number_input("Giá khớp thực tế ($):", value=float(existing_dec.get("actual_fill_price") or 0.0), key=f"fp_{sym}_{key_suffix}")
+                fill_sh_in = st.number_input("Số cổ phiếu khớp:", value=int(existing_dec.get("actual_fill_shares") or 0), step=1, key=f"fsh_{sym}_{key_suffix}")
+                fill_date_in = st.text_input("Ngày khớp:", value=str(existing_dec.get("actual_fill_date") or ""), placeholder="YYYY-MM-DD", key=f"fd_{sym}_{key_suffix}")
+                fill_notes_in = st.text_input("Ghi chú khớp lệnh:", value=str(existing_dec.get("actual_fill_notes") or ""), placeholder="Ghi nhận trượt giá, broker...", key=f"fn_{sym}_{key_suffix}")
+
+            submitted = st.form_submit_button("💾 Lưu Quyết Định & Nhật Ký Giao Dịch", use_container_width=True)
+            if submitted and repo:
+                # Validate plan if entry/stop are entered
+                plan_valid = True
+                calc_result = None
+                if plan_entry_in > 0 and plan_stop_in > 0:
+                    calc_result = calculate_trade_plan(
+                        entry_price=plan_entry_in,
+                        invalidation_price=plan_stop_in,
+                        account_capital=user_capital,
+                        risk_budget_pct=user_risk_pct,
+                        current_exposure_usd=user_exposure,
+                        max_capital_pct=max_alloc_pct,
+                        side=side_val,
+                        shares=plan_shares_in if plan_shares_in > 0 else None
+                    )
+                    if not calc_result["is_valid"]:
+                        plan_valid = False
+                        st.error(f"⚠️ Kế hoạch không hợp lệ: {calc_result.get('error')}. Không lưu kế hoạch có mức dừng lỗ sai chiều.")
+
+                if plan_valid:
+                    try:
+                        repo.save_trade_decision(
+                            session_date=as_of_clean,
+                            symbol=sym,
+                            decision=dec_radio,
+                            decision_reason=dec_reason,
+                            plan_entry_price=plan_entry_in if plan_entry_in > 0 else None,
+                            plan_stop_price=plan_stop_in if plan_stop_in > 0 else None,
+                            plan_target_price=plan_tgt_in if plan_tgt_in > 0 else None,
+                            plan_shares=plan_shares_in if plan_shares_in > 0 else None,
+                            observed_trigger_price=obs_trig_in if obs_trig_in > 0 else None,
+                            observed_trigger_time=obs_time_in if obs_time_in else None,
+                            actual_fill_price=fill_p_in if fill_p_in > 0 else None,
+                            actual_fill_date=fill_date_in if fill_date_in else None,
+                            actual_fill_shares=fill_sh_in if fill_sh_in > 0 else None,
+                            actual_fill_notes=fill_notes_in,
+                            reviewer=reviewer_input,
+                            snapshot_id=candidate.get("snapshot_id")
+                        )
+                        st.success(f"Đã lưu quyết định ({dec_radio.upper()}) cho {sym} vào cơ sở dữ liệu.")
+                        if calc_result and calc_result.get("warnings"):
+                            for w in calc_result["warnings"]:
+                                st.warning(f"⚠️ {w}")
+                    except Exception as save_dec_err:
+                        st.error(f"Lỗi khi lưu quyết định: {save_dec_err}")
 
 def show_setup_detail_dialog(
     candidate: Dict[str, Any],

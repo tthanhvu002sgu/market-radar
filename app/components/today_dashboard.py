@@ -191,6 +191,9 @@ def render_today_dashboard(
         st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">📌 Tổng Hợp Phiên (Daily Session Synthesis)</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="editorial-sub">Tổng hợp các tín hiệu mới xuất hiện, thay đổi trạng thái setup, sự kiện BCTC và biến động thị trường của phiên <code>{as_of}</code>.</div>', unsafe_allow_html=True)
     with c_shortcuts:
+        if st.button("🧭 Bắt đầu rà soát sáu bước →", key="btn_today_to_workflow", use_container_width=True):
+            st.session_state["active_page"] = "Luồng rà soát"
+            st.rerun()
         col_sc1, col_sc2 = st.columns(2)
         with col_sc1:
             if st.button("📅 Lịch BCTC →", key="btn_today_to_bctc", use_container_width=True, help="Mở Lịch Báo Cáo Tài Chính toàn thị trường"):
@@ -311,4 +314,3 @@ def render_today_dashboard(
             _render_paginated_events(group_market, candidate_map, as_of, repo, "page_today_market", "Mục")
         else:
             st.info("Không có biến động độ rộng hoặc thứ hạng ngành đáng kể (&ge;2 bậc).")
-

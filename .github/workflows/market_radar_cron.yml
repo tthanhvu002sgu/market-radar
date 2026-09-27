@@ -1,0 +1,82 @@
+name: Market Radar Scheduled Update
+
+on:
+  schedule:
+    # 05:00, 11:00, 17:00, 23:00 giờ Việt Nam (UTC+7) -> 22:00 (hôm trước), 04:00, 10:00, 16:00 UTC
+    - cron: '0 22,4,10,16 * * *'
+  workflow_dispatch:
+    inputs:
+      ping_render:
+        description: 'Gọi Render Deploy Hook sau khi cập nhật xong?'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: market-radar-pipeline
+  cancel-in-progress: false
+
+jobs:
+  update-market-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout mã nguồn
+        uses: actions/checkout@v4
+
+      - name: Thiết lập môi trường Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Cài đặt thư viện phụ thuộc
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Khôi phục Snapshot Database trước đó từ GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data
+          python scripts/sync_release_db.py --download || true
+
+      - name: Chạy Market Radar Update Pipeline
+        run: |
+          python -m jobs.update_pipeline
+
+      - name: Nén Database SQLite đã cập nhật
+        run: |
+          python scripts/sync_release_db.py --compress
+
+      - name: Đẩy bản nén Database lên GitHub Release (tag data-latest)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_TAG="data-latest"
+          ASSET_PATH="data/market_radar.db.gz"
+          
+          echo "Đang cập nhật asset lên GitHub Release [$RELEASE_TAG]..."
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET_PATH" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ASSET_PATH" \
+              --title "Market Radar Database Snapshot (Latest)" \
+              --notes "Bản snapshot database tự động cập nhật từ GitHub Actions. Lần cập nhật gần nhất: $(date -u)"
+          fi
+          echo "Đã đẩy thành công $ASSET_PATH lên Release tag: $RELEASE_TAG"
+
+      - name: Kích hoạt Render Deploy Hook (Tùy chọn)
+        if: ${{ github.event_name == 'schedule' || inputs.ping_render == true }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Đang gửi tín hiệu cập nhật đến Render..."
+            curl -fsS -X POST "$RENDER_DEPLOY_HOOK" || echo "Không thể gọi deploy hook, bỏ qua."
+          else
+            echo "Chưa cấu hình RENDER_DEPLOY_HOOK, bỏ qua bước kích hoạt Render."
+          fi

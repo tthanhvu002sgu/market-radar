@@ -50,6 +50,71 @@ def _format_trend_short_reason(close: float, ma20: float, ma50: float, ma200: Op
         parts.append(f"MA20 (${ma20:.2f}) dưới MA50")
     return "Cấu trúc xu hướng giảm: " + ", ".join(parts) + "."
 
+def evaluate_market_context_alignment(
+    group_type: str,
+    setup_type: str,
+    market_metrics: Optional[Dict[str, Any]]
+) -> Tuple[str, str]:
+    """
+    Evaluate alignment between individual setup and aggregate market context [D-1].
+    Returns (label, reason).
+    Labels: 'phù hợp', 'mâu thuẫn', 'chưa đủ dữ liệu', 'phân hóa / trung tính'.
+    Used as review support without arbitrarily blocking candidates prior to validation.
+    """
+    if not market_metrics or not isinstance(market_metrics, dict):
+        return "chưa đủ dữ liệu", "Chưa có dữ liệu độ rộng để xác định bối cảnh thị trường."
+
+    pct_ma50 = market_metrics.get("pct_above_ma50")
+    if pct_ma50 is None:
+        pct_ma50 = market_metrics.get("breadth_ma50_pct")
+    pct_ma200 = market_metrics.get("pct_above_ma200")
+    if pct_ma200 is None:
+        pct_ma200 = market_metrics.get("breadth_ma200_pct")
+
+    if pct_ma50 is None or pd.isna(pct_ma50):
+        return "chưa đủ dữ liệu", "Thiếu chỉ số % cổ phiếu trên MA50 để đánh giá bối cảnh thị trường."
+
+    pct_ma50 = float(pct_ma50)
+    pct_ma200_val = float(pct_ma200) if (pct_ma200 is not None and not pd.isna(pct_ma200)) else None
+    ma200_str = f", {pct_ma200_val:.1f}% > MA200" if pct_ma200_val is not None else ""
+
+    is_broad_bull = (pct_ma50 >= 55.0 and (pct_ma200_val is None or pct_ma200_val >= 50.0))
+    is_broad_bear = (pct_ma50 < 45.0 and (pct_ma200_val is None or pct_ma200_val < 50.0))
+
+    if group_type == "long_cont":
+        if is_broad_bull:
+            return "phù hợp", f"Bối cảnh thị trường tăng đồng thuận ({pct_ma50:.1f}% > MA50{ma200_str}); thuận lợi cho vị thế Long tiếp diễn."
+        elif is_broad_bear:
+            return "mâu thuẫn", f"Bối cảnh thị trường suy yếu diện rộng ({pct_ma50:.1f}% > MA50{ma200_str}); vị thế Long tiếp diễn đi ngược pha thị trường."
+        else:
+            return "phân hóa / trung tính", f"Bối cảnh thị trường phân hóa ({pct_ma50:.1f}% > MA50{ma200_str}); cần chọn lọc kỹ cổ phiếu dẫn dắt."
+
+    elif group_type == "short_cont":
+        if is_broad_bear:
+            return "phù hợp", f"Bối cảnh thị trường suy yếu diện rộng ({pct_ma50:.1f}% > MA50{ma200_str}); thuận lợi cho vị thế Short tiếp diễn."
+        elif is_broad_bull:
+            return "mâu thuẫn", f"Bối cảnh thị trường tăng mạnh áp đảo ({pct_ma50:.1f}% > MA50{ma200_str}); vị thế Short tiếp diễn gặp rủi ro ngược sóng."
+        else:
+            return "phân hóa / trung tính", f"Bối cảnh thị trường phân hóa ({pct_ma50:.1f}% > MA50{ma200_str}); mức độ đồng thuận short ở mức trung bình."
+
+    elif group_type == "long_rev":
+        if is_broad_bull:
+            return "phù hợp", f"Thị trường chung tích cực ({pct_ma50:.1f}% > MA50{ma200_str}); nhịp đảo chiều tăng có xác suất nhận dòng tiền lan tỏa."
+        elif is_broad_bear:
+            return "mâu thuẫn", f"Thị trường chung chịu áp lực giảm ({pct_ma50:.1f}% > MA50{ma200_str}); bắt đáy đảo chiều long mang rủi ro bẫy tăng giá."
+        else:
+            return "phân hóa / trung tính", f"Thị trường phân hóa ({pct_ma50:.1f}% > MA50{ma200_str}); đảo chiều tăng cần kiểm tra kỹ lực cầu tại vùng hỗ trợ."
+
+    elif group_type == "short_rev":
+        if is_broad_bear:
+            return "phù hợp", f"Thị trường chung suy yếu ({pct_ma50:.1f}% > MA50{ma200_str}); hỗ trợ kích hoạt lực bán đảo chiều giảm."
+        elif is_broad_bull:
+            return "mâu thuẫn", f"Độ rộng thị trường tích cực ({pct_ma50:.1f}% > MA50{ma200_str}); short đảo chiều đỉnh đối mặt rủi ro bị bóp nghẽn ngắn hạn."
+        else:
+            return "phân hóa / trung tính", f"Thị trường phân hóa ({pct_ma50:.1f}% > MA50{ma200_str}); tín hiệu đảo chiều giảm ở mức trung tính."
+
+    return "phân hóa / trung tính", f"Bối cảnh thị trường ({pct_ma50:.1f}% > MA50{ma200_str}); tín hiệu kỹ thuật nội bộ đang mâu thuẫn."
+
 def screen_candidates(
     latest_stocks_df: pd.DataFrame,
     sector_metrics: List[Dict[str, Any]],
@@ -57,7 +122,8 @@ def screen_candidates(
     industry_metrics: Optional[List[Dict[str, Any]]] = None,
     fa_data_dict: Optional[Dict[str, Any]] = None,
     ref_date: Optional[date] = None,
-    require_benchmark: bool = False
+    require_benchmark: bool = False,
+    market_metrics: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
     Screen S&P 500 universe into 4 candidate groups:
@@ -357,12 +423,15 @@ def screen_candidates(
                 spy_perf_20d=spy_1m
             )
 
+            align_tag, align_summary = evaluate_market_context_alignment("watchlist", "contradiction", market_metrics)
             candidates_raw.append({
                 "symbol": sym,
                 "company_name": company_name,
                 "sector": sector,
                 "sub_industry": sub_ind,
                 "is_oneil_leader": False,
+                "rs_rating": int(rs_rating_val) if pd.notna(rs_rating_val) else None,
+                "rs_vs_spy": rs_vs_spy,
                 "industry_comp": industry_comp,
                 "group_type": "watchlist",
                 "status": "watchlist",
@@ -397,7 +466,9 @@ def screen_candidates(
                 "candle_pattern": setup_analysis.get("candle_pattern", "Không rõ mẫu hình"),
                 "candlestick_analysis": setup_analysis.get("candlestick_analysis", {}),
                 "checklist": setup_analysis.get("checklist", []),
-                "evidence_json": setup_analysis.get("evidence_json", {})
+                "evidence_json": setup_analysis.get("evidence_json", {}),
+                "market_context_alignment": align_tag,
+                "market_context_summary": align_summary
             })
         else:
             for m in matches:
@@ -409,6 +480,7 @@ def screen_candidates(
                     fa_eval=fa_eval,
                     spy_perf_20d=spy_1m
                 )
+                align_tag, align_summary = evaluate_market_context_alignment(m["group_type"], subtype, market_metrics)
 
                 candidates_raw.append({
                     "symbol": sym,
@@ -416,6 +488,8 @@ def screen_candidates(
                     "sector": sector,
                     "sub_industry": sub_ind,
                     "is_oneil_leader": is_stock_leader,
+                    "rs_rating": int(rs_rating_val) if pd.notna(rs_rating_val) else None,
+                    "rs_vs_spy": rs_vs_spy,
                     "industry_comp": industry_comp,
                     "group_type": m["group_type"],
                     "status": m["status"],
@@ -450,7 +524,9 @@ def screen_candidates(
                     "candle_pattern": setup_analysis.get("candle_pattern", "Không rõ mẫu hình"),
                     "candlestick_analysis": setup_analysis.get("candlestick_analysis", {}),
                     "checklist": setup_analysis.get("checklist", []),
-                    "evidence_json": setup_analysis.get("evidence_json", {})
+                    "evidence_json": setup_analysis.get("evidence_json", {}),
+                    "market_context_alignment": align_tag,
+                    "market_context_summary": align_summary
                 })
 
     # Sort each group by score descending (no forced quotas)

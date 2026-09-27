@@ -188,48 +188,32 @@ def test_setup_detail_dialog_helper():
         "perf_20d": 12.0
     }
 
-    mock_repo = MagicMock()
-    mock_repo.get_bars.return_value = []
-
-    # Test when st.dialog exists
-    with patch("streamlit.session_state", {}), \
-         patch("streamlit.markdown"), \
-         patch("streamlit.tabs", return_value=[MagicMock(), MagicMock(), MagicMock()]):
-        # Call show_setup_detail_dialog
-        show_setup_detail_dialog(sample_candidate, as_of="2026-03-27", repo=mock_repo, key_suffix="test")
+    # Exercise dialog dispatch without opening a real Streamlit context in a unit test.
+    with patch("streamlit.dialog", side_effect=lambda *args, **kwargs: lambda fn: fn), \
+         patch("app.components.setup_detail.render_setup_detail_modal") as render_detail:
+        show_setup_detail_dialog(sample_candidate, as_of="2026-03-27", repo=MagicMock(), key_suffix="test")
+        render_detail.assert_called_once()
 
 
 def test_main_navigation_structure():
-    """Verify 10-page list and categories match the utilitarian sidebar architecture."""
-    expected_pages = [
-        "Tổng hợp phiên",
-        "Lịch BCTC",
-        "Ứng viên",
-        "Nền giá & bứt phá",
-        "Thị trường",
-        "Ngành",
-        "Nhóm ngành",
-        "Chất lượng tín hiệu",
-        "Thay đổi giữa phiên",
-        "Dữ liệu & vận hành"
-    ]
+    """The sidebar starts at market, follows the review path, and retains all routes."""
+    from app.navigation import DEFAULT_PAGE, build_nav_sections, page_ids, resolve_initial_page
 
-    expected_categories = [
-        "THEO DÕI",
-        "TÌM CƠ HỘI",
-        "BỐI CẢNH",
-        "ĐÁNH GIÁ",
-        "HỆ THỐNG"
-    ]
+    sections = build_nav_sections(unread_count=3, candidate_count=12, base_count=4)
+    ids = page_ids()
+    assert DEFAULT_PAGE == ids[0] == "Thị trường"
+    assert ids == [page for section in sections for page, _ in section["items"]]
+    assert len(ids) == len(set(ids)) == 11
+    assert ids.index("Ngành") < ids.index("Nhóm ngành") < ids.index("Ứng viên")
+    assert ids.index("Ứng viên") < ids.index("Nền giá & bứt phá") < ids.index("Luồng rà soát") < ids.index("Chất lượng tín hiệu")
+    assert {"Tổng hợp phiên", "Lịch BCTC", "Thay đổi giữa phiên", "Dữ liệu & vận hành"} <= set(ids)
+    assert "(3)" in sections[1]["items"][0][1]
 
-    # Inspect app/main.py content to ensure all expected pages and categories are wired
-    from pathlib import Path
-    main_py_path = Path(__file__).resolve().parent.parent / "app" / "main.py"
-    with open(main_py_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    for page in expected_pages:
-        assert f'"{page}"' in content, f"Page '{page}' should be defined in main.py"
-
-    for cat in expected_categories:
-        assert f'"{cat}"' in content, f"Category '{cat}' should be present in NAV_SECTIONS in main.py"
+    fresh = {}
+    assert resolve_initial_page(fresh) == "Thị trường"
+    old_home = {"active_page": "Tổng hợp phiên"}
+    assert resolve_initial_page(old_home) == "Thị trường"
+    old_home["active_page"] = "Tổng hợp phiên"
+    assert resolve_initial_page(old_home) == "Tổng hợp phiên"
+    selected_detail = {"active_page": "Ứng viên"}
+    assert resolve_initial_page(selected_detail) == "Ứng viên"

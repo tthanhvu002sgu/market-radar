@@ -29,7 +29,9 @@ QUADRANT_PALETTE = {
 def render_gics_sectors(
     sector_metrics: List[Dict[str, Any]],
     sector_rotation: Optional[Dict[str, Any]] = None,
-    sector_health: Optional[List[Dict[str, Any]]] = None
+    sector_health: Optional[List[Dict[str, Any]]] = None,
+    as_of: str = "",
+    repo: Optional[Any] = None
 ):
     """
     Hiển thị phân tích 11 ngành GICS theo thứ tự chuẩn:
@@ -485,6 +487,41 @@ def render_gics_sectors(
                 st.session_state["cand_nav_from"] = {"page": "Ngành", "label": f"Ngành {selected_sector}"}
                 st.rerun()
 
+        # Thesis & Reason Logging for Selected Sector [D-2]
+        as_of_clean = as_of.split()[0] if as_of else ""
+        with st.expander(f"📝 Hồ Sơ Luận Điểm Chọn Ngành {selected_sector} (Session Thesis)", expanded=False):
+            sec_theses = repo.get_review_theses(session_date=as_of_clean, target_type="sector", target_name=selected_sector) if repo else []
+            latest_thesis = sec_theses[0] if sec_theses else {}
+
+            with st.form(key=f"form_sector_thesis_{selected_sector}"):
+                st.markdown(f"<b>Ghi nhận lý do lựa chọn ngành {selected_sector} trong phiên {as_of_clean}:</b>", unsafe_allow_html=True)
+                thesis_text = st.text_area(
+                    "Luận điểm / Lý do chọn ngành này để tìm kiếm ứng viên:",
+                    value=latest_thesis.get("selection_reason", ""),
+                    placeholder="VD: Dòng tiền luân chuyển vào Tech, turnover share tăng vọt, nhóm bán dẫn bứt phá...",
+                    height=80
+                )
+                c_t1, c_t2 = st.columns(2)
+                with c_t1:
+                    src_input = st.text_input("Nguồn / Động lực:", value=latest_thesis.get("source", "Sức mạnh giá RS / Dòng tiền"), key=f"src_sec_{selected_sector}")
+                with c_t2:
+                    rev_input = st.text_input("Người rà soát:", value=latest_thesis.get("reviewer", "User"), key=f"rev_sec_{selected_sector}")
+
+                saved_btn = st.form_submit_button("💾 Lưu Luận Điểm Chọn Ngành")
+                if saved_btn and repo:
+                    try:
+                        repo.save_review_thesis(
+                            session_date=as_of_clean,
+                            target_type="sector",
+                            target_name=selected_sector,
+                            selection_reason=thesis_text,
+                            source=src_input,
+                            reviewer=rev_input
+                        )
+                        st.success(f"Đã lưu luận điểm cho ngành {selected_sector} trong phiên {as_of_clean}.")
+                    except Exception as th_err:
+                        st.error(f"Lỗi khi lưu luận điểm: {th_err}")
+
         tab_sec1, tab_sec2 = st.tabs([
             "🏆 Top 5 Cổ Phiếu Đóng Góp Thanh Khoản Lớn Nhất",
             "🏢 Chi Tiết Nhóm Ngành Nhỏ (Sub-Industries)"
@@ -573,7 +610,9 @@ def render_sector_section(
     industry_metrics: Optional[List[Dict[str, Any]]] = None,
     view_mode: Optional[str] = None,
     sector_rotation: Optional[Dict[str, Any]] = None,
-    sector_health: Optional[List[Dict[str, Any]]] = None
+    sector_health: Optional[List[Dict[str, Any]]] = None,
+    as_of: str = "",
+    repo: Optional[Any] = None
 ):
     """Render Sector rankings, Relative Strength rotation, Sub-industry breakdown, and O'Neil Heatmap."""
     if not sector_metrics and not industry_metrics:
@@ -584,11 +623,13 @@ def render_sector_section(
         render_gics_sectors(
             sector_metrics or [],
             sector_rotation=sector_rotation,
-            sector_health=sector_health
+            sector_health=sector_health,
+            as_of=as_of,
+            repo=repo
         )
         return
     elif view_mode == "heatmap":
-        render_industry_heatmap(industry_metrics or [])
+        render_industry_heatmap(industry_metrics or [], as_of=as_of, repo=repo)
         return
 
     # Fallback to internal segmented control if view_mode is not explicitly specified
@@ -622,7 +663,13 @@ def render_sector_section(
         render_gics_sectors(
             sector_metrics or [],
             sector_rotation=sector_rotation,
-            sector_health=sector_health
+            sector_health=sector_health,
+            as_of=as_of,
+            repo=repo
         )
     elif selected_sec_sub == "heatmap":
-        render_industry_heatmap(industry_metrics or [])
+        render_industry_heatmap(
+            industry_metrics or [],
+            as_of=as_of,
+            repo=repo
+        )

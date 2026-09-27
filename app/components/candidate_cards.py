@@ -122,6 +122,38 @@ def render_candidate_card(
     setup_badge_html = f'<span style="font-size: 11.5px; font-weight: 600; background: #E1F3FE; color: #1F6C9F; border: 1px solid #BAE6FD; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.03em; text-transform: uppercase; margin-left: 6px;">{setup_type}</span>' if setup_type else ''
     candle_badge_html = f'<span style="font-size: 11.5px; color: #787774; background: #FAFAFA; border: 1px solid #EAEAEA; padding: 2px 7px; border-radius: 4px; margin-left: 6px;">{candle_pattern}</span>' if candle_pattern and candle_pattern != "-" else ''
 
+    # Market context badge [D-1]
+    ctx_align = cand.get("market_context_alignment", "chưa đủ dữ liệu")
+    if ctx_align == "phù hợp":
+        ctx_badge_html = '<span style="font-size: 11px; font-weight: 600; background: #EDF3EC; color: #346538; padding: 2px 7px; border-radius: 4px; margin-left: 6px;">Thuận TT</span>'
+    elif ctx_align == "mâu thuẫn":
+        ctx_badge_html = '<span style="font-size: 11px; font-weight: 600; background: #FDEBEC; color: #9F2F2D; padding: 2px 7px; border-radius: 4px; margin-left: 6px;">Nghịch TT</span>'
+    elif ctx_align == "phân hóa / trung tính":
+        ctx_badge_html = '<span style="font-size: 11px; font-weight: 600; background: #FEF3D6; color: #8F6B00; padding: 2px 7px; border-radius: 4px; margin-left: 6px;">TT phân hóa</span>'
+    else:
+        ctx_badge_html = ''
+
+    # Themes badges [D-2]
+    th_items = repo.get_symbol_themes(symbol=sym) if (repo and hasattr(repo, "get_symbol_themes")) else []
+    themes_badge_html = " ".join([
+        f'<span style="font-size: 11px; font-weight: 600; background: #EBF3FB; color: #1D6FB8; padding: 2px 7px; border-radius: 4px; margin-left: 4px;" title="Nguồn: {t.get("source")} | Ngày: {t.get("effective_date")} | Xác nhận: {t.get("verified_by")}">🏷️ {t.get("theme_name")}</span>'
+        for t in th_items
+    ])
+
+    # User decision badge [D-4]
+    as_of_clean = as_of.split()[0] if as_of else ""
+    dec_recs = repo.get_trade_decisions(session_date=as_of_clean, symbol=sym) if (repo and hasattr(repo, "get_trade_decisions")) else []
+    if dec_recs:
+        u_dec = dec_recs[0].get("decision")
+        if u_dec == "chon":
+            dec_badge_html = '<span style="font-size: 11.5px; font-weight: 600; background: #EDF3EC; color: #346538; border: 1px solid #346538; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">🟢 Đã Chọn</span>'
+        elif u_dec == "cho":
+            dec_badge_html = '<span style="font-size: 11.5px; font-weight: 600; background: #FEF3D6; color: #8F6B00; border: 1px solid #8F6B00; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">🟡 Chờ</span>'
+        else:
+            dec_badge_html = '<span style="font-size: 11.5px; font-weight: 600; background: #FDEBEC; color: #9F2F2D; border: 1px solid #9F2F2D; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">🔴 Bỏ Qua</span>'
+    else:
+        dec_badge_html = ''
+
     color_1d = "#346538" if p1d >= 0 else "#9F2F2D"
     color_5d = "#346538" if p5d >= 0 else "#9F2F2D"
     color_20d = "#346538" if p20d >= 0 else "#9F2F2D"
@@ -143,6 +175,9 @@ def render_candidate_card(
             f'{oneil_badge_html}'
             f'{setup_badge_html}'
             f'{candle_badge_html}'
+            f'{ctx_badge_html}'
+            f'{themes_badge_html}'
+            f'{dec_badge_html}'
             f'</div>'
             f'<div style="display: flex; align-items: center; gap: 10px;">'
             f'<span style="font-family: \'Geist Mono\', monospace; font-size: 13.5px; color: #787774;">Score: <b style="color: #111111;">{score:+.1f}</b></span>'
@@ -297,10 +332,19 @@ def render_candidates_table(candidates: List[Dict[str, Any]], as_of: str = "", r
         else:
             status_label = "Watchlist"
 
+        as_of_d = as_of.split()[0] if as_of else ""
+        th_list = repo.get_symbol_themes(symbol=c["symbol"]) if (repo and hasattr(repo, "get_symbol_themes")) else []
+        th_str = ", ".join(t.get("theme_name", "") for t in th_list) if th_list else "-"
+        dec_list = repo.get_trade_decisions(session_date=as_of_d, symbol=c["symbol"]) if (repo and hasattr(repo, "get_trade_decisions")) else []
+        dec_str = dec_list[0]["decision"].upper() if dec_list else "-"
+
         table_data.append({
             "Ưu tiên": c.get("review_rank"),
             "Mã": c["symbol"],
             "Chất lượng": TIER_LABELS.get(c.get("quality_tier"), "Chưa đánh giá"),
+            "Bối cảnh TT": c.get("market_context_alignment", "chưa đủ dữ liệu"),
+            "Themes": th_str,
+            "Quyết định": dec_str,
             "Lý do xét lọc": c.get("quality_reasons", ""),
             "Rủi ro (%)": c.get("risk_pct"),
             "Rủi ro (ATR)": c.get("risk_atr"),
@@ -331,6 +375,9 @@ def render_candidates_table(candidates: List[Dict[str, Any]], as_of: str = "", r
         hide_index=True,
         column_config={
             "Ưu tiên": st.column_config.NumberColumn("Ưu tiên", format="%d"),
+            "Bối cảnh TT": st.column_config.TextColumn("Bối cảnh TT"),
+            "Themes": st.column_config.TextColumn("Themes"),
+            "Quyết định": st.column_config.TextColumn("Quyết định"),
             "Lý do xét lọc": st.column_config.TextColumn("Lý do xét lọc", width="large"),
             "Rủi ro (%)": st.column_config.NumberColumn("Rủi ro (%)", format="%.2f"),
             "Rủi ro (ATR)": st.column_config.NumberColumn("Rủi ro (ATR)", format="%.2f"),
@@ -573,6 +620,7 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
         )
         st.write("Điểm vào tham chiếu lấy giá bất lợi hơn giữa close và trigger. Thiếu cản phía trước hoặc lịch BCTC → chờ kiểm tra; không tự tạo target. Khoảng trống/R chưa tính phí và trượt giá, không phải lợi nhuận kỳ vọng.")
         st.caption(f"{p.version}: ngưỡng rà soát ban đầu, chưa kiểm định lợi nhuận. Áp dụng lại trên evidence của snapshot đang xem; hạng/score scanner gốc được giữ để đối chiếu. Xếp ưu tiên theo chất lượng, khoảng trống/R (chặn tại 5), risk ATR rồi score gốc.")
+
     f_col1, f_col2, f_col3, f_col4 = st.columns([2.0, 1.2, 1.1, 1.3])
     with f_col1:
         search_sym = st.text_input("Tìm kiếm mã hoặc công ty:", placeholder="Nhập AAPL, MSFT, NVDA...", key="cand_search_input").strip().lower()
@@ -606,8 +654,71 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
             if search_sym in c["symbol"].lower() or search_sym in c.get("company_name", "").lower()
         ]
 
+    # Resolve Shortlist: Frozen Snapshot Shortlist vs Dynamic Review [D-04]
+    as_of_clean = as_of.split()[0] if as_of else ""
+    effective_snapshot_id = snapshot_id or (candidates[0].get("snapshot_id") if candidates else None)
+
+    frozen_shortlist = []
+    is_frozen_run = False
+    if repo and hasattr(repo, "get_frozen_shortlist"):
+        try:
+            frozen_shortlist = repo.get_frozen_shortlist(
+                session_date=as_of_clean,
+                snapshot_id=effective_snapshot_id,
+                policy_version=DEFAULT_POLICY.version
+            )
+            if hasattr(repo, "has_frozen_shortlist"):
+                is_frozen_run = repo.has_frozen_shortlist(
+                    snapshot_id=effective_snapshot_id,
+                    session_date=as_of_clean,
+                    policy_version=DEFAULT_POLICY.version
+                )
+            else:
+                is_frozen_run = bool(frozen_shortlist)
+        except Exception:
+            frozen_shortlist = []
+            is_frozen_run = False
+
     if quality_view == "Ưu tiên (tối đa 10 mã)":
-        display_candidates = select_shortlist(display_candidates, industry_limit=2 if diversify else None)
+        if is_frozen_run or frozen_shortlist:
+            def make_key(c_item):
+                return (
+                    c_item.get("symbol", ""),
+                    c_item.get("group_type") or "",
+                    c_item.get("setup_type") or ""
+                )
+
+            cand_by_exact = {make_key(c): c for c in display_candidates}
+
+            matched_shortlist = []
+            for f in sorted(frozen_shortlist, key=lambda x: x.get("review_rank", 999)):
+                matched_c = cand_by_exact.get(make_key(f))
+                if matched_c is None:
+                    # The candidate may have been removed by a UI filter. A frozen
+                    # row must not reintroduce it or borrow another setup's data.
+                    continue
+                merged = dict(matched_c)
+
+                merged["review_rank"] = f.get("review_rank")
+                merged["quality_tier"] = f.get("quality_tier", merged.get("quality_tier"))
+                merged["quality_reasons"] = f.get("quality_reasons", merged.get("quality_reasons"))
+                if f.get("entry_reference") is not None:
+                    merged["entry_reference"] = f["entry_reference"]
+                if f.get("trigger_price") is not None:
+                    merged["trigger_price"] = f["trigger_price"]
+                if f.get("invalidation_price") is not None:
+                    merged["invalidation_price"] = f["invalidation_price"]
+                if f.get("room_risk") is not None:
+                    merged["room_risk"] = f["room_risk"]
+                if f.get("market_context_alignment"):
+                    merged["market_context_alignment"] = f["market_context_alignment"]
+
+                matched_shortlist.append(merged)
+
+            display_candidates = matched_shortlist[:10]
+            st.caption(f"❄️ Đang hiển thị **Shortlist thực tế đã đóng băng** ({len(display_candidates)} mã) theo phiên {as_of_clean} (Version {DEFAULT_POLICY.version}).")
+        else:
+            display_candidates = select_shortlist(display_candidates, industry_limit=2 if diversify else None)
     elif quality_view in TIER_LABELS.values():
         display_candidates = [c for c in display_candidates if TIER_LABELS[c["quality_tier"]] == quality_view]
 
@@ -680,7 +791,7 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
         else:
             grouped["watchlist"].append(c)
 
-    base_records = repo.get_base_snapshots(snapshot_id=snapshot_id, as_of=as_of) if repo else []
+    base_records = repo.get_base_snapshots(snapshot_id=snapshot_id, as_of=as_of) if (repo and hasattr(repo, "get_base_snapshots")) else []
     base_map = {b["symbol"]: b for b in base_records}
 
     sub_keys = ["long_cont", "short_cont", "long_rev", "short_rev", "watchlist"]
@@ -771,3 +882,31 @@ def render_candidates_section(candidates: List[Dict[str, Any]], as_of: str = "",
                     key_suffix=f"{g_key}_{idx}",
                     base_info=base_map.get(c["symbol"])
                 )
+
+    # Playbook Quality Breakdown [D-5]
+    from analytics.candidate_quality import summarize_playbook_quality
+    pb_summary = summarize_playbook_quality(candidates)
+    st.markdown("<div style='margin-top: 24px;'></div>", unsafe_allow_html=True)
+    with st.expander("📊 Báo Cáo Phân Tích Chất Lượng Theo Từng Playbook (Playbook Quality Audit)", expanded=False):
+        st.markdown('<div style="font-size: 14.5px; font-weight: 600; color: #111111; margin-bottom: 6px;">Tỷ Lệ Đạt / Chờ / Loại & Nguyên Nhân Nghẽn Theo Từng Playbook</div>', unsafe_allow_html=True)
+        st.caption(f"Nguyên tắc kiểm định: {pb_summary.get('note', '')}")
+
+        pb_rows = []
+        for pb_k, stats in pb_summary.get("by_playbook", {}).items():
+            parts = pb_k.split(":")
+            g_name = parts[0]
+            s_name = parts[1] if len(parts) > 1 else ""
+            top_w = "; ".join([f"{r} ({cnt})" for r, cnt in stats.get("top_wait_reasons", [])[:2]])
+            top_rej = "; ".join([f"{r} ({cnt})" for r, cnt in stats.get("top_reject_reasons", [])[:2]])
+            bottleneck = top_w if stats["wait"] >= stats["reject"] else top_rej
+            pb_rows.append({
+                "Playbook": f"{g_name} / {s_name}",
+                "Tổng số": stats["total"],
+                "Đạt (Ready)": f"{stats['ready']} ({stats['ready_pct']}%)",
+                "Chờ (Wait)": f"{stats['wait']} ({stats['wait_pct']}%)",
+                "Loại (Reject)": f"{stats['reject']} ({stats['reject_pct']}%)",
+                "Cản quan sát được": f"{stats['barrier_present_count']} / {stats['total']}",
+                "Lý do nghẽn chủ đạo": bottleneck or "Không có"
+            })
+        if pb_rows:
+            st.dataframe(pd.DataFrame(pb_rows), use_container_width=True, hide_index=True)

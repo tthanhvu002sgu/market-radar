@@ -341,7 +341,10 @@ def run_update_pipeline(db_path=None, force: bool = False) -> Dict[str, Any]:
             logger.warning(f"Lỗi khi quét nền giá (base building): {base_err}")
 
         # 5. Preliminary screening to find priority candidates for FA enrichment
-        prelim_candidates = screen_candidates(latest_stocks_df, sector_metrics, None, industry_metrics, ref_date=session_dt, require_benchmark=True)
+        prelim_candidates = screen_candidates(
+            latest_stocks_df, sector_metrics, None, industry_metrics,
+            ref_date=session_dt, require_benchmark=True, market_metrics=market_metrics
+        )
         # Bổ sung FA cho cả mã ứng viên và mã đang xây nền [D-01]
         candidate_symbols = list(dict.fromkeys([c["symbol"] for c in prelim_candidates] + base_building_symbols))
 
@@ -353,7 +356,10 @@ def run_update_pipeline(db_path=None, force: bool = False) -> Dict[str, Any]:
 
         # Reload fundamentals and re-run final candidate screening
         fundamentals_df = repo.get_fundamentals(candidate_symbols) if candidate_symbols else pd.DataFrame()
-        final_candidates = screen_candidates(latest_stocks_df, sector_metrics, fundamentals_df, industry_metrics, ref_date=session_dt, require_benchmark=True)
+        final_candidates = screen_candidates(
+            latest_stocks_df, sector_metrics, fundamentals_df, industry_metrics,
+            ref_date=session_dt, require_benchmark=True, market_metrics=market_metrics
+        )
 
         # 7. Save Snapshot
         snapshot_id = repo.save_snapshot(
@@ -382,6 +388,21 @@ def run_update_pipeline(db_path=None, force: bool = False) -> Dict[str, Any]:
                 logger.info(f"Đã lưu {saved_base_count} bản ghi nền giá cho snapshot #{snapshot_id}.")
             except Exception as base_save_err:
                 logger.warning(f"Lỗi khi lưu base_snapshots: {base_save_err}")
+
+        # 7c. Freeze Shortlist [D-04]
+        try:
+            from analytics.candidate_quality import rank_for_review, select_shortlist, DEFAULT_POLICY
+            ranked_candidates = rank_for_review(final_candidates, policy=DEFAULT_POLICY)
+            session_shortlist = select_shortlist(ranked_candidates, limit=10, industry_limit=2)
+            frozen_count = repo.save_frozen_shortlist(
+                snapshot_id=snapshot_id,
+                session_date=target_session,
+                policy_version=DEFAULT_POLICY.version,
+                shortlist=session_shortlist
+            )
+            logger.info(f"Đã đóng băng {frozen_count} mã vào shortlist thực tế (version {DEFAULT_POLICY.version}) cho snapshot #{snapshot_id}.")
+        except Exception as fz_err:
+            logger.warning(f"Lỗi khi đóng băng shortlist: {fz_err}")
 
         # 8. Generate and save Signal Events (Today Dashboard alerts)
         try:

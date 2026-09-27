@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: market-radar
+    runtime: python
+    plan: free
+    region: singapore # or oregon / frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GITHUB_REPO
+        value: tthanhvu002sgu/market-radar
+      - key: RELEASE_TAG
+        value: data-latest

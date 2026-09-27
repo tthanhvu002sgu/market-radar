@@ -17,10 +17,12 @@ from app.components.metrics_cards import render_market_overview
 from app.components.sector_table import render_sector_section
 from app.components.candidate_cards import render_candidates_section
 from app.components.today_dashboard import render_today_dashboard
+from app.components.review_workflow import render_review_workflow, sync_review_context
 from app.components.setup_detail import render_setup_detail_modal, show_setup_detail_dialog
 from app.components.signal_performance import render_signal_performance_section
 from app.components.earnings_calendar import render_earnings_calendar_section
 from app.components.base_watchlist import render_base_watchlist
+from app.navigation import build_nav_sections, resolve_initial_page
 from analytics.market_calendar import get_market_status_now, compute_session_age
 
 # Page config
@@ -305,21 +307,7 @@ if selected_snapshot:
         status_note = '<div style="color: #9F2F2D; font-size: 12.5px; margin-top: 4px;">Độ bao phủ chưa đạt ngưỡng chuẩn.</div>'
 
 # Navigation State Handling
-VALID_PAGES = [
-    "Tổng hợp phiên",
-    "Lịch BCTC",
-    "Ứng viên",
-    "Nền giá & bứt phá",
-    "Thị trường",
-    "Ngành",
-    "Nhóm ngành",
-    "Chất lượng tín hiệu",
-    "Thay đổi giữa phiên",
-    "Dữ liệu & vận hành"
-]
-
-if "active_page" not in st.session_state or st.session_state["active_page"] not in VALID_PAGES:
-    st.session_state["active_page"] = "Tổng hợp phiên"
+resolve_initial_page(st.session_state)
 
 # Snapshot Data Extraction
 candidates = []
@@ -328,6 +316,12 @@ unread_cnt = 0
 
 if selected_snapshot:
     current_snapshot_id = selected_snapshot["id"]
+    if st.session_state.get("wf_snapshot_id") != current_snapshot_id:
+        previous_nav = st.session_state.get("cand_nav_from")
+        if isinstance(previous_nav, dict) and previous_nav.get("page") == "Luồng rà soát":
+            for key in ("cand_nav_from", "cand_sector_filter", "cand_sub_industry_filter"):
+                st.session_state.pop(key, None)
+        sync_review_context(st.session_state, current_snapshot_id)
     candidates = repo.get_candidates_by_snapshot(current_snapshot_id)
     if hasattr(repo, "get_latest_base_snapshots"):
         base_records = repo.get_latest_base_snapshots(as_of=as_of)
@@ -341,44 +335,8 @@ if selected_snapshot:
 st.sidebar.markdown('<div class="editorial-hero" style="font-size: 20px; margin-bottom: 2px;">Market Radar</div>', unsafe_allow_html=True)
 st.sidebar.markdown(f'<div class="editorial-label" style="margin-bottom: 14px;">S&P 500 Swing Architecture &middot; {RULE_VERSION}</div>', unsafe_allow_html=True)
 
-# Sidebar: 1-Level Categorized Navigation
-NAV_SECTIONS = [
-    {
-        "category": "THEO DÕI",
-        "items": [
-            ("Tổng hợp phiên", f"📌 Tổng hợp phiên" + (f" ({unread_cnt})" if unread_cnt > 0 else "")),
-            ("Lịch BCTC", "📅 Lịch BCTC"),
-        ]
-    },
-    {
-        "category": "TÌM CƠ HỘI",
-        "items": [
-            ("Ứng viên", f"🎯 Ứng viên ({len(candidates)})"),
-            ("Nền giá & bứt phá", f"🧱 Nền giá & bứt phá ({len(base_records)})"),
-        ]
-    },
-    {
-        "category": "BỐI CẢNH",
-        "items": [
-            ("Thị trường", "🌐 Thị trường"),
-            ("Ngành", "📊 Ngành"),
-            ("Nhóm ngành", "🗺️ Nhóm ngành"),
-        ]
-    },
-    {
-        "category": "ĐÁNH GIÁ",
-        "items": [
-            ("Chất lượng tín hiệu", "📈 Chất lượng tín hiệu"),
-            ("Thay đổi giữa phiên", "🔄 Thay đổi giữa phiên"),
-        ]
-    },
-    {
-        "category": "HỆ THỐNG",
-        "items": [
-            ("Dữ liệu & vận hành", "⚙️ Dữ liệu & vận hành"),
-        ]
-    }
-]
+# Sidebar: review path first, session utilities and operations below it.
+NAV_SECTIONS = build_nav_sections(unread_cnt, len(candidates), len(base_records))
 
 for section in NAV_SECTIONS:
     st.sidebar.markdown(f'<div class="sidebar-nav-header">{section["category"]}</div>', unsafe_allow_html=True)
@@ -463,10 +421,11 @@ mkt_status = get_market_status_now()
 # Map Active Page to Display Title
 PAGE_TITLES = {
     "Tổng hợp phiên": "📌 Tổng Hợp Phiên (Daily Synthesis)",
+    "Luồng rà soát": "🧭 Luồng Rà Soát Sáu Bước",
     "Lịch BCTC": "📅 Lịch Báo Cáo Tài Chính (Earnings Calendar)",
     "Ứng viên": "🎯 Trạm Làm Việc Ứng Viên Giao Dịch",
     "Nền giá & bứt phá": "🧱 Nền Giá & Bứt Phá (Base Building & Breakout)",
-    "Thị trường": "🌐 Bức Tranh Thị Trường (Market Breadth)",
+    "Thị trường": "🌐 Thị Trường",
     "Ngành": "📊 Phân Tích 11 Ngành GICS (Sector Rotation)",
     "Nhóm ngành": "🗺️ Ma Trận 127 Nhóm Ngành O'Neil (Industry Heatmap)",
     "Chất lượng tín hiệu": "📈 Đo Lường & Hiệu Quả Tín Hiệu (Alpha Audit)",
@@ -499,6 +458,16 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+if active_page != "Luồng rà soát" and st.session_state.get("wf_active"):
+    back_context = " / ".join(filter(None, [st.session_state.get("wf_sector"), st.session_state.get("wf_industry")]))
+    back_symbol = st.session_state.get("wf_candidate")
+    back_label = " · ".join(filter(None, [back_context, back_symbol[0] if back_symbol else None]))
+    back_col, back_btn = st.columns([4, 1.4])
+    back_col.caption(f"Luồng rà soát snapshot #{current_snapshot_id}" + (f" · {back_label}" if back_label else ""))
+    if back_btn.button("← Trở lại luồng rà soát", key="return_review_workflow", use_container_width=True):
+        st.session_state["active_page"] = "Luồng rà soát"
+        st.rerun()
 
 # Compatibility & Stale Hard-Gate Warning Banners
 if is_invariant_violation or is_legacy:
@@ -674,6 +643,8 @@ if active_page == "Tổng hợp phiên":
         candidates=candidates,
         repo=repo
     )
+elif active_page == "Luồng rà soát":
+    render_review_workflow(selected_snapshot, candidates, repo)
 elif active_page == "Lịch BCTC":
     render_earnings_calendar_section(
         as_of=as_of,
@@ -696,6 +667,11 @@ elif active_page == "Nền giá & bứt phá":
         candidates=candidates
     )
 elif active_page == "Thị trường":
+    start_col, start_button = st.columns([4, 1.6])
+    start_col.caption("Bước 1/6 · Xem bối cảnh thị trường, rồi đi tiếp qua ngành, leader, setup, rủi ro và quyết định.")
+    if start_button.button("Bắt đầu rà soát 6 bước →", key="market_start_review", use_container_width=True):
+        st.session_state["active_page"] = "Luồng rà soát"
+        st.rerun()
     render_market_overview(
         market_metrics,
         as_of=as_of,
@@ -712,13 +688,17 @@ elif active_page == "Ngành":
         industry_metrics,
         view_mode="macro",
         sector_rotation=sector_rotation,
-        sector_health=sector_health
+        sector_health=sector_health,
+        as_of=as_of,
+        repo=repo
     )
 elif active_page == "Nhóm ngành":
     render_sector_section(
         sector_metrics,
         industry_metrics,
-        view_mode="heatmap"
+        view_mode="heatmap",
+        as_of=as_of,
+        repo=repo
     )
 elif active_page == "Chất lượng tín hiệu":
     render_signal_performance_section(

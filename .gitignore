@@ -12,11 +12,13 @@ ENV/
 # Database
 *.db
 *.db.bak
+*.db.gz
 *.db-journal
 *.db-wal
 *.db-shm
 data/*.db
 data/*.db.bak
+data/*.db.gz
 storage/*.db
 storage/*.db.bak
 data/

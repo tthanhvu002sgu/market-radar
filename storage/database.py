@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS candidate_snapshots (
     evidence_json TEXT,
     signal_key TEXT,
     candle_pattern TEXT DEFAULT 'Không rõ mẫu hình',
+    market_context_alignment TEXT DEFAULT 'chưa đủ dữ liệu',
+    market_context_summary TEXT DEFAULT '',
+    rs_rating INTEGER,
+    rs_vs_spy REAL,
     FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
 );
 
@@ -274,6 +278,125 @@ CREATE INDEX IF NOT EXISTS idx_base_snapshots_symbol_as_of ON base_snapshots(sym
 CREATE INDEX IF NOT EXISTS idx_base_snapshots_base_id ON base_snapshots(base_id);
 CREATE INDEX IF NOT EXISTS idx_base_snapshots_state ON base_snapshots(state);
 CREATE INDEX IF NOT EXISTS idx_base_snapshots_active ON base_snapshots(is_active);
+
+CREATE TABLE IF NOT EXISTS review_theses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_date TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_name TEXT NOT NULL,
+    selection_reason TEXT NOT NULL,
+    source TEXT,
+    reviewer TEXT DEFAULT 'User',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(session_date, target_type, target_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_theses_session ON review_theses(session_date);
+CREATE INDEX IF NOT EXISTS idx_review_theses_target ON review_theses(target_type, target_name);
+
+CREATE TABLE IF NOT EXISTS themes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme_name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS symbol_themes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    theme_name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    verified_by TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(symbol, theme_name, effective_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_themes_symbol ON symbol_themes(symbol);
+CREATE INDEX IF NOT EXISTS idx_symbol_themes_theme ON symbol_themes(theme_name);
+
+CREATE TABLE IF NOT EXISTS frozen_shortlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    session_date TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    review_rank INTEGER,
+    group_type TEXT,
+    setup_type TEXT,
+    entry_reference REAL,
+    trigger_price REAL,
+    invalidation_price REAL,
+    room_risk REAL,
+    quality_tier TEXT,
+    quality_reasons TEXT,
+    market_context_alignment TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(snapshot_id, symbol, policy_version),
+    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_frozen_shortlists_session ON frozen_shortlists(session_date);
+CREATE INDEX IF NOT EXISTS idx_frozen_shortlists_symbol ON frozen_shortlists(symbol);
+
+CREATE TABLE IF NOT EXISTS frozen_shortlist_metadata (
+    snapshot_id INTEGER NOT NULL,
+    session_date TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    total_shortlist INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, policy_version),
+    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_frozen_shortlist_meta_session ON frozen_shortlist_metadata(session_date);
+
+CREATE TABLE IF NOT EXISTS trade_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_date TEXT NOT NULL,
+    snapshot_id INTEGER,
+    symbol TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    decision_reason TEXT,
+    plan_entry_price REAL,
+    plan_stop_price REAL,
+    plan_target_price REAL,
+    plan_shares INTEGER,
+    observed_trigger_price REAL,
+    observed_trigger_time TEXT,
+    actual_fill_price REAL,
+    actual_fill_date TEXT,
+    actual_fill_shares INTEGER,
+    actual_fill_notes TEXT,
+    reviewer TEXT DEFAULT 'User',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(session_date, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_decisions_session ON trade_decisions(session_date);
+CREATE INDEX IF NOT EXISTS idx_trade_decisions_symbol ON trade_decisions(symbol);
+
+CREATE TABLE IF NOT EXISTS workflow_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    session_date TEXT NOT NULL,
+    sector TEXT,
+    industry TEXT,
+    symbol TEXT,
+    group_type TEXT,
+    setup_type TEXT,
+    outcome TEXT NOT NULL,
+    stop_stage TEXT,
+    reason TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_reviews_snapshot ON workflow_reviews(snapshot_id, created_at DESC);
 """
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -349,6 +472,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 "evidence_json": "TEXT",
                 "signal_key": "TEXT",
                 "candle_pattern": "TEXT DEFAULT 'Không rõ mẫu hình'",
+                "market_context_alignment": "TEXT DEFAULT 'chưa đủ dữ liệu'",
+                "market_context_summary": "TEXT DEFAULT ''",
+                "rs_rating": "INTEGER",
+                "rs_vs_spy": "REAL",
             }
             for col_name, col_type in new_cand_columns.items():
                 if col_name not in cand_cols:

@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from storage.repository import MarketRadarRepository
-from analytics.signal_outcomes import compute_quality_summary
+from analytics.signal_outcomes import compute_quality_summary, evaluate_shortlist_and_decision_outcomes
 
 def render_signal_performance_section(repo: MarketRadarRepository, rule_version: Optional[str] = None):
     """Render the Signal Performance audit tab."""
@@ -310,3 +310,63 @@ def render_signal_performance_section(repo: MarketRadarRepository, rule_version:
         mime="text/csv"
     )
 
+    # --- SHORTLIST & DECISION CLOSED-LOOP AUDIT [D-04] ---
+    st.markdown('<div style="margin-top: 36px;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="editorial-hero" style="font-size: 22px; margin-bottom: 4px;">Khảo Sát Quyết Định & Shortlist Thực Tế (Shortlist & Decision Audit)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="editorial-sub" style="font-size: 13.5px;">Phân tích vòng lặp đóng (Closed-Loop Review): So sánh diễn biến giữa các nhóm quyết định của Trader (Chọn vs Chờ vs Bỏ qua), đo lường độ xuyên phá Trigger và trượt giá (Slippage) từ Kế hoạch / Trigger đến Khớp thực tế.</div>', unsafe_allow_html=True)
+
+    frozen_all = repo.get_frozen_shortlist() if (repo and hasattr(repo, "get_frozen_shortlist")) else []
+    decisions_all = repo.get_trade_decisions() if (repo and hasattr(repo, "get_trade_decisions")) else []
+
+    if frozen_all:
+        f_symbols = list(set(f["symbol"] for f in frozen_all))
+        min_date = min((f.get("session_date") for f in frozen_all if f.get("session_date")), default=None)
+        shortlist_bars = repo.get_daily_bars(symbols=f_symbols, start_date=min_date) if min_date else pd.DataFrame()
+
+        sh_eval = evaluate_shortlist_and_decision_outcomes(
+            shortlist_items=frozen_all,
+            decisions=decisions_all,
+            daily_bars_df=shortlist_bars,
+            horizons=[1, 3, 5]
+        )
+
+        dec_stats = sh_eval.get("decision_stats", {})
+        slip = sh_eval.get("slippage_summary", {})
+
+        s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+        s_col1.metric("Tổng Ứng Viên Shortlist", sh_eval.get("total_shortlist", 0))
+        reviewed_count = sum(
+            item["user_decision"] != "chưa ghi nhận"
+            for item in sh_eval["evaluated_items"]
+        )
+        s_col2.metric("Số Quyết Định Trong Shortlist", reviewed_count)
+        plan_slip = f"{slip['plan_to_fill_avg']:+.2f}%" if slip.get("plan_to_fill_avg") is not None else "-"
+        s_col3.metric("Trượt Giá Plan → Fill", plan_slip, help="Mức chênh lệch trung bình giữa giá khớp thực tế và giá vào dự kiến trong kế hoạch.")
+        trig_slip = f"{slip['trigger_to_fill_avg']:+.2f}%" if slip.get("trigger_to_fill_avg") is not None else "-"
+        s_col4.metric("Trượt Giá Trigger → Fill", trig_slip, help="Mức chênh lệch trung bình giữa giá khớp thực tế và giá trigger quan sát.")
+
+        if dec_stats:
+            st.markdown("<div style='font-size: 15px; font-weight: 600; color: #111111; margin: 16px 0 6px 0;'>Thống Kê So Sánh Theo Quyết Định Của Trader:</div>", unsafe_allow_html=True)
+            stat_rows = []
+            dec_label_map = {
+                "chon": "🟢 Chọn (Select & Plan)",
+                "cho": "🟡 Chờ (Wait & Standby)",
+                "bo_qua": "🔴 Bỏ qua (Pass / Reject)",
+                "chưa ghi nhận": "⚪ Chưa ghi nhận quyết định"
+            }
+            for d_name, d_data in dec_stats.items():
+                stat_rows.append({
+                    "Quyết Định": dec_label_map.get(d_name, d_name),
+                    "Số Ứng Viên": d_data.get("count", 0),
+                    "Chạm Trigger (%)": f"{d_data.get('trigger_hit_pct', 0.0):.1f}%",
+                    "Chạm SL (%)": f"{d_data.get('invalidation_hit_pct', 0.0):.1f}%",
+                    "Lợi Suất Benchmark 1d": f"{d_data['avg_return_1d']:+.2f}%" if d_data.get("avg_return_1d") is not None else "-",
+                    "Lợi Suất Benchmark 3d": f"{d_data['avg_return_3d']:+.2f}%" if d_data.get("avg_return_3d") is not None else "-",
+                    "Lợi Suất Benchmark 5d": f"{d_data['avg_return_5d']:+.2f}%" if d_data.get("avg_return_5d") is not None else "-",
+                    "Win Rate Benchmark 3d": f"{d_data['win_rate_3d']:.1f}%" if d_data.get("win_rate_3d") is not None else "-",
+                    "Số Lệnh Khớp": d_data.get("fill_count", 0),
+                    "Lợi Suất Khớp Thực Tế 3d": f"{d_data['avg_fill_return_3d']:+.2f}%" if d_data.get("avg_fill_return_3d") is not None else "-"
+                })
+            st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("Chưa có ứng viên nào trong Shortlist đóng băng để đánh giá vòng lặp quyết định.")
