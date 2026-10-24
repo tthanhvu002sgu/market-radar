@@ -45,6 +45,9 @@ Xem file `.env.example`:
 | `HISTORICAL_DAYS` | Không | `365` | Số ngày lịch sử nến ngày tải về |
 | `MIN_COVERAGE_PCT` | Không | `0.95` | Ngưỡng cảnh báo độ bao phủ universe |
 | `LOG_LEVEL` | Không | `INFO` | Mức log hệ thống |
+| `APCA_API_KEY_ID` | Không (chỉ cần cho OFI) | *(trống)* | Alpaca Market Data API key — tạo miễn phí tại [alpaca.markets](https://alpaca.markets) (paper account). Set trên Render env (trang OFI live) và GitHub Actions secrets (workflow thu thập lịch sử) |
+| `APCA_API_SECRET_KEY` | Không (chỉ cần cho OFI) | *(trống)* | Alpaca secret key đi kèm |
+| `OFI_DB_PATH` | Không | `data/ofi_history.db` | File SQLite riêng lưu lịch sử OFI phút |
 
 ---
 
@@ -74,6 +77,7 @@ Xem file `.env.example`:
 | M20 | Thanh Bar Đối Chiếu Tỷ Lệ Độ Rộng Thị Trường | Nâng cấp các thẻ đo lường độ rộng (Advancing/Declining, New High/Low, SMA50, SMA200, Xung lực Bull/Bear) thành thanh bar đối chiếu hai màu xanh/đỏ trực quan thay vì chỉ có số | done |
 | M21 | Phân Hệ Lịch Báo Cáo Tài Chính (Earnings Calendar) | Trạm làm việc theo dõi lịch BCTC toàn diện: bộ lọc tuần này/tuần tới/14 ngày, phân loại BMO/AMC, bộ lọc S&P 500 & Ứng viên Radar, chế độ Lịch tuần và Bảng chi tiết kèm link TradingView & SEC EDGAR | done |
 | M22 | Nhận diện Nền giá (Base Building & Đang xây nền) | Phát hiện cấu trúc tích lũy đi ngang (cửa sổ 20 phiên, yêu cầu >=40 nến): biên độ <=12%, ER <=0.35, độ lệch tâm <=0.30, thu hẹp TR/Vol <=0.80 cho trạng thái tight; đóng băng biên độ từ phiên phát hiện; đánh giá breakout/breakdown nhân quả tại T theo biên T-1; cân bằng volume có dấu (signed volume balance); bối cảnh MA50/200, RS vs SPY, áp lực P/V; theo dõi vòng đời nền (forming, tight, breakout, breakdown, invalidated, closed); cô lập storage với Signal Outcomes | done |
+| M23 | Dòng tiền OFI (Order Flow Imbalance) | OFI Level-1 theo Cont-Kukanov-Stoikov (2014) từ quote Alpaca free (feed IEX) cho tối đa 30 mã ứng viên: tab live (OFI tích luỹ theo phút, z-score block 60 phút, imbalance ratio, corr OFI-Δmid; cache 2 phút) + tab lịch sử (workflow GitHub Actions thu thập mỗi 15 phút trong phiên vào DB riêng ofi_history.db, asset riêng trên Release data-latest); no-op an toàn khi thiếu API key; ghi rõ giới hạn IEX ~2-3% khối lượng và vai trò bối cảnh phiên, không phải tín hiệu mua/bán | done (cần cấu hình Alpaca key miễn phí để bật dữ liệu) |
 
 ### Chi tiết các luồng chính
 - **M01 — Thị trường & Độ rộng Tham gia:** Tóm tắt tự động bằng câu văn có số liệu thực tế; phát hiện nhanh đà tăng do nhóm vốn hóa lớn kéo hay lan tỏa toàn thị trường (so sánh SPY vs RSP); phân tích chuỗi thời gian A/D Line, AD Volume Line (khối lượng mã tăng vs mã giảm), lịch sử % trên MA20/50/200 (loại trừ mã thiếu MA khỏi mẫu số), Net Breadth và so sánh lợi suất Equal-Weight vs Median.
@@ -87,6 +91,7 @@ Xem file `.env.example`:
 - **M13, M14 — Nhận diện Nến Nhật & Bối cảnh FA:** Tách bạch hình học nến khỏi vị trí xuất hiện (VD: Hammer tại hỗ trợ MA20 xác nhận phản ứng vs rủi ro mua đuổi khi tăng xa >1.5 ATR); công bố đầy đủ ngưỡng nhận diện; tích hợp Candlestick Edge Audit trong đo lường tín hiệu; khôi phục hiển thị chỉ số FA (tăng trưởng Doanh thu, EPS, Margin, kỳ BCTC) kèm xuất xứ nguồn và nút mở trực tiếp SEC EDGAR.
 - **M15, M16, M18 — Minh bạch Miền & Giám sát Thị trường:** Đồng hồ thị trường New York/Việt Nam và trạng thái NYSE; giám sát độ tươi snapshot (`as_of`) và cảnh báo dữ liệu lịch sử; hồ sơ áp lực giá-volume 1/3/5 phiên không giả định order book; tuyên bố rõ ràng phạm vi vũ trụ 503 mã thành phần S&P 500.
 - **M22 — Nhận diện Nền Giá (Đang Xây Nền):** Module chuyên biệt trong tab Ứng viên giúp theo dõi cổ phiếu tích lũy trước breakout. Tách bạch cấu trúc hình học nền giá khỏi bằng chứng tích lũy volume; hiển thị rõ ràng ngày phát hiện ban đầu (`detected_at`) và cửa sổ 20 phiên hiện tại (`window_start` -> `window_end`); checklist điều kiện đạt/chưa đạt; xuất CSV; và sinh sự kiện cảnh báo EOD chống trùng lặp.
+- **M23 — Dòng tiền OFI:** Bối cảnh dòng tiền vi cấu trúc trong phiên cho các ứng viên. Cần Alpaca API key miễn phí (feed IEX): set `APCA_API_KEY_ID`/`APCA_API_SECRET_KEY` trên Render env để bật tab live, và thêm 2 secrets cùng tên trên GitHub để workflow `ofi_collector` (mỗi 15 phút trong phiên Mỹ) tích lũy lịch sử vào `ofi_history.db`. Thiếu key hệ thống vẫn chạy đầy đủ các tính năng khác.
 
 
 ---
@@ -100,6 +105,7 @@ Xem file `.env.example`:
 | **Backend & Analytics** | Python 3.12, pandas, numpy | Xử lý dữ liệu định lượng, tính MA, Relative Strength, Breadth và luật lọc ứng viên |
 | **Lưu trữ (Data)** | SQLite (`sqlite3`) | Lưu trữ universe, nến ngày, chỉ số FA, và toàn bộ lịch sử snapshot phân tích |
 | **Data Adapters** | Wikipedia Provider + YFinance Provider | Thu thập dữ liệu mở, chuẩn hóa mã (`BRK.B` -> `BRK-B`), tải song song với `ThreadPoolExecutor` |
+| **Quote Adapter (OFI)** | Alpaca Quote Provider (REST, feed IEX) | Thu thập quote best bid/ask Level-1 phục vụ tính OFI (M23), song song với `ThreadPoolExecutor`, lỗi xác thực tách riêng |
 | **Concurrency & Lock** | `ProcessLock` (file-based) | Đảm bảo an toàn tiến trình, chống chạy trùng lặp tác vụ cập nhật |
 
 ### Sơ đồ luồng dữ liệu
@@ -107,6 +113,8 @@ Xem file `.env.example`:
 [Wikipedia S&P 500] ──> [providers/sp500_provider] ──> [constituents table]
                                                               │
 [Yahoo Finance API] ──> [providers/yfinance_provider] ─> [daily_bars table]
+                                                              │
+[Alpaca IEX (Level 1)] ──> [providers/alpaca_provider] ──> [analytics/order_flow_imbalance] ──> [ofi_history.db riêng]
                                                               │
 [SQLite Local DB]   <── [jobs/update_pipeline] <──────────────┤
         │                                                     ▼
@@ -246,6 +254,13 @@ market radar/
 ---
 
 ## 4. Các task đã làm
+
+### [2026-10-24] Tính năng Dòng tiền OFI — Order Flow Imbalance Level-1 `(EXE)`
+- **Tóm tắt:** Thêm động cơ OFI (Cont-Kukanov-Stoikov 2014) tính từ quote best bid/ask của Alpaca Market Data API free (feed IEX) cho tối đa 30 mã ứng viên của snapshot mới nhất. Trang UI "💧 Dòng tiền OFI" (nhóm PHIÊN & SỰ KIỆN) có tab live (fetch trực tiếp, cache 2 phút: biểu đồ OFI tích luỹ + bảng z-score/imbalance/corr) và tab lịch sử (workflow GitHub Actions `ofi_collector` chạy mỗi 15 phút trong phiên Mỹ, lưu OFI phút vào SQLite riêng `data/ofi_history.db`, upload asset `ofi_history.db.gz` lên Release `data-latest` độc lập với asset DB chính để hai workflow không ghi đè nhau).
+- **Thay đổi chính:** `providers/alpaca_provider.py` (mới, provider đầu tiên có API key, `BaseQuoteProvider` ABC); `analytics/order_flow_imbalance.py` (mới, pure functions CKS + bucket 60 giây + metrics z-score block); `storage/ofi_store.py` (mới, `OfiHistoryRepository`); `jobs/update_ofi.py` (mới, idempotent theo cursor với buffer 3 phút xử lý seam phút đang dở); `.github/workflows/ofi_collector.yml` (mới); `app/components/ofi_flow.py` (mới) + đăng ký navigation/main; `scripts/sync_release_db.py` thêm cờ `--ofi`; `start.sh` tải thêm asset OFI; `render.yaml` khai báo env Alpaca (`sync: false`); SRS FR-08/M08/§6.3; 4 file test mới (23 test).
+- **Cần làm thủ công:** tạo Alpaca paper account → set secrets `APCA_API_KEY_ID`/`APCA_API_SECRET_KEY` trên GitHub Actions và Render dashboard → chạy thử `workflow_dispatch` workflow OFI Collector.
+- **Audit hardening (cùng ngày):** tách lỗi xác thực Alpaca (401/403 ném `AlpacaAuthError` không retry → job trả thất bại để workflow báo đỏ, UI hiện banner lỗi riêng; 4xx khác cũng bỏ retry); kẹp cursor theo đầu phiên (không ghép event OFI qua ranh giới phiên, không fetch lại dữ liệu cũ); `cum_ofi` reset theo từng phiên; giữ quote một bên sổ rỗng (giá 0 = size 0) và quote locked, chỉ loại cross/giá âm; z-score trả N/A khi chưa đủ 10 phút dữ liệu; job báo `degraded` (thất bại) khi quá 15 phút đầu phiên mà 0 symbol có quote; fetch live song song bằng `ThreadPoolExecutor`; timestamp/cursor lưu chuẩn ISO-8601-Z; candidate sắp theo rank nhất quán giữa job và UI.
+- **Giới hạn đã ghi nhận:** feed IEX chỉ ~2-3% khối lượng (OFI là xấp xỉ); horizon dự báo giây-phút nên chỉ dùng làm bối cảnh phiên, chưa tích hợp vào scoring; multi-level PCA và cross-asset LASSO để phase sau (cần dữ liệu L2 trả phí).
 
 ### [2026-09-14] Tái Cấu Trúc Toàn Diện Trải Nghiệm Giao Diện Người Dùng (UI Reorganization) `(EXE)`
 - **Mode / Type / Action / Lane:** REFACTOR / UI / EXECUTE / n/a

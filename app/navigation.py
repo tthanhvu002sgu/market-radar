@@ -21,6 +21,7 @@ def build_nav_sections(unread_count: int, candidate_count: int, base_count: int)
             "category": "PHIÊN & SỰ KIỆN",
             "items": [
                 ("Tổng hợp phiên", "📌 Tổng hợp phiên" + (f" ({unread_count})" if unread_count > 0 else "")),
+                ("Dòng tiền OFI", "💧 Dòng tiền OFI"),
                 ("Lịch BCTC", "📅 Lịch BCTC"),
                 ("Thay đổi giữa phiên", "🔄 Thay đổi giữa phiên"),
             ],

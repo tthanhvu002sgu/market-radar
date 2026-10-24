@@ -22,6 +22,7 @@
    - 2.3 Bảng So Sánh Trực Diện 2–5 Ứng Viên (Side-by-Side Comparison)
    - 2.4 Góc nhìn 03: Phân Hệ Lịch Báo Cáo Tài Chính (Earnings Calendar)
    - 2.5 Hộp Thoại Chi Tiết Setup (Setup Detail Dialog — 3 Tabs Nội Bộ)
+   - 2.6 Trang Dòng Tiền OFI (Order Flow Imbalance — Live & Lịch Sử)
 3. [TRỤ CỘT 2: 🌐 BẢN ĐỒ THỊ TRƯỜNG & NGÀNH](#3-trụ-cột-2--bản-đồ-thị-trường--ngành)
    - 3.1 Góc nhìn 01: Bức Tranh Thị Trường & Độ Rộng Tham Gia
    - 3.2 Cụm Biểu Đồ Nến 3 Chỉ Số Lớn (S&P 500, NASDAQ, DOW)
@@ -269,6 +270,18 @@ Khi click nút `Chi tiết setup 🔍`, hệ thống mở một modal phân tíc
     - `CHƯA ĐẠT / FAIL` (Đỏ): Tiêu chí bị vi phạm (ví dụ: Khối lượng chưa đạt 1.5x bình quân).
     - `THIẾU DỮ LIỆU / N/A` (Vàng): Không đủ dữ liệu lịch sử để đánh giá (ví dụ: Mã mới niêm yết chưa đủ 200 nến để tính MA200).
 - Khối cảnh báo rủi ro đặc thù và nút mở TradingView toàn màn hình.
+
+### 2.6 Trang Dòng Tiền OFI (Order Flow Imbalance — Live & Lịch Sử)
+Trang `💧 Dòng tiền OFI` thuộc nhóm **PHIÊN & SỰ KIỆN** trên sidebar, theo dõi áp lực mua/bán ròng vi cấu trúc của tối đa 30 mã ứng viên từ snapshot hiện tại.
+
+- **Công thức (Cont-Kukanov-Stoikov 2014, Level 1):** mỗi quote update sinh áp lực ròng `eₙ` từ thay đổi khối lượng tại best bid/ask; tổng hợp theo phút; **OFI tích luỹ** là tổng từ đầu phiên. Xử lý quote: một bên sổ rỗng (giá 0) được giữ như size 0 (bắt event rút sạch một bên); quote locked (bid = ask) được giữ; quote cross (bid > ask) và giá âm bị loại.
+- **Tab "Phiên hiện tại" (live):** khi thị trường mở, hệ thống fetch quote Alpaca (feed IEX, song song 8 luồng, cache 2 phút) và hiển thị:
+  - Biểu đồ OFI tích luỹ (top 8 mã theo |OFI tích luỹ|), đường 0 làm mốc.
+  - Bảng metrics: OFI tích luỹ, Z-score (block 60 phút cuối so với phân phối cả phiên — chỉ hiện khi có tối thiểu 10 phút dữ liệu), Imbalance (ΣOFI/Σ|OFI| ∈ [−1, 1]), số phút dữ liệu, Corr(OFI, Δmid) — chẩn đoán kiểu CKS.
+- **Tab "Lịch sử":** chọn phiên từ dropdown; đường OFI tích luỹ (reset theo từng phiên) và bảng tổng kết mỗi phiên, đọc từ `data/ofi_history.db` do workflow GitHub Actions `ofi_collector` thu thập mỗi 15 phút trong phiên Mỹ.
+- **Cấu hình:** cần 2 biến môi trường `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` (Alpaca paper account miễn phí) — set trên Render (tab live) và GitHub Actions secrets (thu thập lịch sử). Khi chưa có key, trang hiển thị hướng dẫn thay vì lỗi; key sai/thiếu quyền (HTTP 401/403) hiển thị **cảnh báo lỗi xác thực riêng** thay vì thông báo "chưa có dữ liệu"; mọi tính năng khác hoạt động bình thường.
+- **Giám sát collector:** job thu thập tự no-op khi thiếu key/ngoài phiên; thất bại xác thực hoặc quá 15 phút đầu phiên mà không thu được dữ liệu của symbol nào sẽ làm workflow GitHub Actions báo đỏ (thay vì xanh vô nghĩa) — đây là điểm giám sát chính khi vận hành.
+- **Nguyên tắc giải đọc:** OFI dương tích luỹ = áp lực mua ròng từ thay đổi sổ lệnh (không phải khối lượng khớp). Feed IEX chỉ ~2–3% khối lượng toàn thị trường nên đây là **xấp xỉ**; horizon dự báo ở mức giây–phút — dùng hợp lệ hoá bối cảnh phiên cho setup swing, **không** dùng làm tín hiệu mua/bán độc lập.
 
 ---
 

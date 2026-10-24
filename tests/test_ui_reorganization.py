@@ -1,6 +1,6 @@
 """
 Unit tests for the Reorganized UI Architecture:
-1. Sidebar-driven 1-level 10-page navigation structure and categories.
+1. Sidebar-driven 1-level 12-page navigation structure and categories.
 2. Candidate Cards: Contradiction rename, dual CSV downloads (filtered vs full), unified modal dialog helper.
 3. Base Building: Dual data scope ("Trong snapshot" vs "Tất cả các đợt"), unique symbols and setup count format.
 4. Setup Detail: 3-tab layout (Technical & Candlestick, Company & Earnings, Checklist).
@@ -203,11 +203,15 @@ def test_main_navigation_structure():
     ids = page_ids()
     assert DEFAULT_PAGE == ids[0] == "Thị trường"
     assert ids == [page for section in sections for page, _ in section["items"]]
-    assert len(ids) == len(set(ids)) == 11
+    assert len(ids) == len(set(ids)) == 12
     assert ids.index("Ngành") < ids.index("Nhóm ngành") < ids.index("Ứng viên")
     assert ids.index("Ứng viên") < ids.index("Nền giá & bứt phá") < ids.index("Luồng rà soát") < ids.index("Chất lượng tín hiệu")
-    assert {"Tổng hợp phiên", "Lịch BCTC", "Thay đổi giữa phiên", "Dữ liệu & vận hành"} <= set(ids)
+    assert {"Tổng hợp phiên", "Dòng tiền OFI", "Lịch BCTC", "Thay đổi giữa phiên", "Dữ liệu & vận hành"} <= set(ids)
     assert "(3)" in sections[1]["items"][0][1]
+    # Trang OFI thuộc section PHIÊN & SỰ KIỆN, sau Tổng hợp phiên
+    session_section = next(s for s in sections if s["category"] == "PHIÊN & SỰ KIỆN")
+    session_ids = [page for page, _ in session_section["items"]]
+    assert session_ids.index("Tổng hợp phiên") < session_ids.index("Dòng tiền OFI") < session_ids.index("Lịch BCTC")
 
     fresh = {}
     assert resolve_initial_page(fresh) == "Thị trường"
@@ -217,3 +221,57 @@ def test_main_navigation_structure():
     assert resolve_initial_page(old_home) == "Tổng hợp phiên"
     selected_detail = {"active_page": "Ứng viên"}
     assert resolve_initial_page(selected_detail) == "Ứng viên"
+
+
+def test_ofi_flow_page_renders_without_configuration():
+    """Trang OFI render an toàn: trích symbol theo rank, và hiện hướng dẫn khi thiếu Alpaca key."""
+    from app.components.ofi_flow import _candidate_symbols, render_ofi_section
+
+    # Sắp theo rank tăng dần (None cuối); dedupe giữ lần xuất hiện đầu
+    assert _candidate_symbols([
+        {"symbol": " AAPL ", "rank": 2}, {"symbol": "AAPL", "rank": 1},
+        {"symbol": "MSFT", "rank": None}, {"symbol": "NVDA", "rank": 1},
+    ]) == ["NVDA", "AAPL", "MSFT"]
+
+    mock_store = MagicMock()
+    mock_store.get_session_dates.return_value = []
+    with patch("app.components.ofi_flow.fetch_live_ofi_metrics",
+               return_value={"configured": False, "auth_error": False, "metrics": {}}), \
+         patch("app.components.ofi_flow.get_market_status_now",
+               return_value={"status_phase": "closed_night"}), \
+         patch("app.components.ofi_flow.OfiHistoryRepository", return_value=mock_store), \
+         patch("streamlit.markdown") as mock_md, \
+         patch("streamlit.caption"), \
+         patch("streamlit.info") as mock_info, \
+         patch("streamlit.tabs", side_effect=lambda labels: [MagicMock() for _ in labels]), \
+         patch("streamlit.spinner"), \
+         patch("streamlit.expander"):
+
+        render_ofi_section([{"symbol": "AAPL"}, {"symbol": "MSFT"}], "2026-10-24")
+
+    assert mock_md.called
+    mock_info.assert_called_once()  # hướng dẫn cấu hình Alpaca key
+
+
+def test_ofi_flow_page_shows_auth_error_banner():
+    """Key sai (401/403) phải hiện cảnh báo lỗi xác thực riêng, không lẫn 'chưa có dữ liệu'."""
+    from app.components.ofi_flow import render_ofi_section
+
+    mock_store = MagicMock()
+    mock_store.get_session_dates.return_value = []
+    with patch("app.components.ofi_flow.fetch_live_ofi_metrics",
+               return_value={"configured": True, "auth_error": True, "metrics": {}}), \
+         patch("app.components.ofi_flow.get_market_status_now",
+               return_value={"status_phase": "regular"}), \
+         patch("app.components.ofi_flow.OfiHistoryRepository", return_value=mock_store), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.error") as mock_error, \
+         patch("streamlit.tabs", side_effect=lambda labels: [MagicMock() for _ in labels]), \
+         patch("streamlit.spinner"), \
+         patch("streamlit.expander"):
+
+        render_ofi_section([{"symbol": "AAPL"}], "2026-10-24")
+
+    mock_error.assert_called_once()
+    assert "401" in mock_error.call_args[0][0]

@@ -13,3 +13,9 @@ services:
         value: tthanhvu002sgu/market-radar
       - key: RELEASE_TAG
         value: data-latest
+      # Alpaca keys cho trang OFI (live quotes). sync: false — set giá trị trên
+      # Render dashboard; app vẫn chạy bình thường khi chưa cấu hình.
+      - key: APCA_API_KEY_ID
+        sync: false
+      - key: APCA_API_SECRET_KEY
+        sync: false

@@ -26,11 +26,14 @@ logger = logging.getLogger("sync_db")
 DEFAULT_REPO = os.getenv("GITHUB_REPO", "tthanhvu002sgu/market-radar")
 DEFAULT_TAG = os.getenv("RELEASE_TAG", "data-latest")
 DEFAULT_ASSET = "market_radar.db.gz"
+OFI_ASSET = "ofi_history.db.gz"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "market_radar.db"
 GZ_PATH = DATA_DIR / DEFAULT_ASSET
+OFI_DB_PATH = DATA_DIR / "ofi_history.db"
+OFI_GZ_PATH = DATA_DIR / OFI_ASSET
 
 
 def verify_sqlite_db(path: Path) -> bool:
@@ -145,7 +148,7 @@ def download_from_release(
 
     # 3. Giai nen file .gz thanh .db
     if download_success and temp_gz.exists():
-        temp_db = DATA_DIR / "market_radar.db.unpack"
+        temp_db = DATA_DIR / f"{output_db.stem}.unpack"
         logger.info(f"Đang giải nén {temp_gz} ({temp_gz.stat().st_size / 1024 / 1024:.2f} MB)...")
         try:
             with gzip.open(temp_gz, "rb") as f_in, open(temp_db, "wb") as f_out:
@@ -177,23 +180,35 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Market Radar DB Sync Utility")
     parser.add_argument("--compress", action="store_true", help="Nén market_radar.db thành market_radar.db.gz")
     parser.add_argument("--download", action="store_true", help="Tải market_radar.db.gz từ GitHub Releases và giải nén")
+    parser.add_argument("--ofi", action="store_true",
+                        help="Thao tác trên ofi_history.db (asset ofi_history.db.gz) thay vì DB chính")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repository (VD: owner/repo)")
     parser.add_argument("--tag", default=DEFAULT_TAG, help="Release tag (VD: data-latest)")
     parser.add_argument("--token", default=None, help="GitHub Personal Access Token nếu repo là private")
     args = parser.parse_args()
 
+    if args.ofi:
+        asset_name, db_path, gz_path = OFI_ASSET, OFI_DB_PATH, OFI_GZ_PATH
+    else:
+        asset_name, db_path, gz_path = DEFAULT_ASSET, DB_PATH, GZ_PATH
+
     if args.compress:
-        success = compress_db()
+        success = compress_db(source_db=db_path, target_gz=gz_path)
         sys.exit(0 if success else 1)
     elif args.download:
-        success = download_from_release(repo=args.repo, tag=args.tag, github_token=args.token)
-        if not success:
-            if not DB_PATH.exists():
+        success = download_from_release(
+            repo=args.repo, tag=args.tag, asset_name=asset_name,
+            output_db=db_path, github_token=args.token,
+        )
+        if not success and not args.ofi:
+            if not db_path.exists():
                 logger.warning("Không tải được DB từ Release và chưa có DB cục bộ. Đang khởi tạo database rỗng...")
                 from storage.database import init_db
                 init_db()
             else:
                 logger.info("Không tải được bản mới, tiếp tục sử dụng file database hiện có.")
+        elif not success and args.ofi:
+            logger.info("Không có asset ofi_history.db.gz (các ngày đầu chưa thu thập) — bỏ qua.")
         sys.exit(0)
     else:
         parser.print_help()

@@ -10,6 +10,20 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = Path(os.getenv("DB_PATH", str(DATA_DIR / "market_radar.db")))
 LOCK_FILE = DATA_DIR / "update.lock"
 
+# Alpaca Market Data API (OFI quote source) — provider đầu tiên có API key.
+# Free tier chỉ có feed IEX (~2-3% khối lượng thị trường); OFI là xấp xỉ của toàn thị trường.
+ALPACA_API_KEY_ID = os.getenv("APCA_API_KEY_ID", "")
+ALPACA_API_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY", "")
+ALPACA_DATA_BASE_URL = os.getenv("ALPACA_DATA_BASE_URL", "https://data.alpaca.markets")
+
+# Order Flow Imbalance (OFI) — Level 1 theo Cont, Kukanov & Stoikov (2014)
+OFI_DB_PATH = Path(os.getenv("OFI_DB_PATH", str(DATA_DIR / "ofi_history.db")))
+OFI_BUCKET_SECONDS = 60        # bucket OFI theo phút
+OFI_ZSCORE_WINDOW = 60         # z-score của block OFI trên 60 phút trượt
+OFI_ZSCORE_MIN_MINUTES = 10    # tối thiểu số phút dữ liệu trước khi tính z-score
+OFI_MAX_SYMBOLS = 30           # cap số candidate thu thập mỗi phiên
+OFI_RULE_VERSION = "ofi-l1-v1"
+
 # Technical parameters
 MA_PERIODS = [20, 50, 200]
 VOLUME_MA_PERIOD = 20

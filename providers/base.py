@@ -1,6 +1,24 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Dict, List
 import pandas as pd
+
+class BaseQuoteProvider(ABC):
+    """Provider cho dữ liệu quote best bid/ask (Level 1) — nguồn OFI."""
+
+    @abstractmethod
+    def is_configured(self) -> bool:
+        """True nếu đã có đủ credentials để gọi API."""
+        pass
+
+    @abstractmethod
+    def fetch_quotes(self, symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
+        """Fetch quotes best bid/ask của 1 symbol trong khoảng [start, end] (UTC).
+
+        Returns DataFrame với cột: symbol, timestamp (UTC, tăng dần),
+        bid_price, bid_size, ask_price, ask_size. Lỗi symbol trả DataFrame rỗng.
+        """
+        pass
 
 class BaseUniverseProvider(ABC):
     @abstractmethod

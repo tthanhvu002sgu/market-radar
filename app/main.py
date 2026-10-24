@@ -22,6 +22,7 @@ from app.components.setup_detail import render_setup_detail_modal, show_setup_de
 from app.components.signal_performance import render_signal_performance_section
 from app.components.earnings_calendar import render_earnings_calendar_section
 from app.components.base_watchlist import render_base_watchlist
+from app.components.ofi_flow import render_ofi_section
 from app.navigation import build_nav_sections, resolve_initial_page
 from analytics.market_calendar import get_market_status_now, compute_session_age
 
@@ -430,6 +431,7 @@ PAGE_TITLES = {
     "Nhóm ngành": "🗺️ Ma Trận 127 Nhóm Ngành O'Neil (Industry Heatmap)",
     "Chất lượng tín hiệu": "📈 Đo Lường & Hiệu Quả Tín Hiệu (Alpha Audit)",
     "Thay đổi giữa phiên": "🔄 So Sánh Biến Động Snapshot (Delta)",
+    "Dòng tiền OFI": "💧 Dòng Tiền OFI (Order Flow Imbalance)",
     "Dữ liệu & vận hành": "⚙️ Giám Sát Dữ Liệu & Vận Hành",
 }
 
@@ -707,5 +709,7 @@ elif active_page == "Chất lượng tín hiệu":
     )
 elif active_page == "Thay đổi giữa phiên":
     render_diff_section(selected_snapshot, snapshots_list, repo)
+elif active_page == "Dòng tiền OFI":
+    render_ofi_section(candidates, as_of)
 elif active_page == "Dữ liệu & vận hành":
     render_audit_section(selected_snapshot, repo)

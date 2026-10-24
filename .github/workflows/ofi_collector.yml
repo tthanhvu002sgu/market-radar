@@ -1,0 +1,89 @@
+name: Market Radar OFI Collector
+
+on:
+  schedule:
+    # Mỗi 15 phút trong khung 13:00–21:59 UTC, Thứ 2–Thứ 6.
+    # Phủ 9:30–16:00 ET cả EST (UTC-5) lẫn EDT (UTC-4); các lần chạy ngoài phiên
+    # bị job tự no-op qua kiểm tra get_market_status_now().
+    # Lần 21:xx UTC chạy sau khi đóng cửa để chốt nốt phút cuối và ping Render deploy.
+    - cron: '*/15 13-21 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: market-radar-ofi
+  cancel-in-progress: false
+
+jobs:
+  collect-ofi:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout mã nguồn
+        uses: actions/checkout@v4
+
+      - name: Thiết lập môi trường Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Cài đặt thư viện phụ thuộc
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Khôi phục DB chính (đọc candidates) và DB OFI từ GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data
+          # DB chính: chỉ để đọc danh sách candidate từ snapshot mới nhất
+          python scripts/sync_release_db.py --download || true
+          # DB OFI: các ngày đầu chưa có asset thì bỏ qua
+          python scripts/sync_release_db.py --download --ofi || true
+
+      - name: Chạy OFI Collection Job
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+        run: |
+          python -m jobs.update_ofi
+
+      - name: Nén và đẩy ofi_history.db.gz lên GitHub Release (tag data-latest)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f data/ofi_history.db ]; then
+            echo "Chưa có ofi_history.db — bỏ qua upload."
+            exit 0
+          fi
+          python scripts/sync_release_db.py --compress --ofi
+          RELEASE_TAG="data-latest"
+          ASSET_PATH="data/ofi_history.db.gz"
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET_PATH" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ASSET_PATH" \
+              --title "Market Radar Database Snapshot (Latest)" \
+              --notes "Bản snapshot database tự động cập nhật từ GitHub Actions. Lần cập nhật gần nhất: $(date -u)"
+          fi
+          echo "Đã đẩy $ASSET_PATH lên Release tag: $RELEASE_TAG"
+
+      - name: Kích hoạt Render Deploy Hook (chỉ lần chạy cuối ngày, ~21:xx UTC)
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '*/15 13-21 * * 1-5' }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          HOUR_UTC=$(date -u +%H)
+          if [ "$HOUR_UTC" != "21" ]; then
+            echo "Chưa phải lần chạy cuối phiên (giờ UTC: $HOUR_UTC) — bỏ qua deploy hook."
+            exit 0
+          fi
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Đang gửi tín hiệu cập nhật đến Render..."
+            curl -fsS -X POST "$RENDER_DEPLOY_HOOK" || echo "Không thể gọi deploy hook, bỏ qua."
+          else
+            echo "Chưa cấu hình RENDER_DEPLOY_HOOK, bỏ qua bước kích hoạt Render."
+          fi

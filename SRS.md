@@ -38,6 +38,7 @@
    - 4.5 FR-05: Đánh giá & Bối cảnh Tài chính Cơ bản (Company FA & Context Engine)
    - 4.6 FR-06: Cơ chế Snapshot, Lịch sử Biến động & Lưu trữ (Snapshot & Delta History)
    - 4.7 FR-07: Quản lý Tiến trình & Đảm bảo Chất lượng Dữ liệu (Process Lock & Quality Control)
+   - 4.8 FR-08: Động cơ Dòng tiền OFI — Order Flow Imbalance (OFI Engine)
 5. [YÊU CẦU PHI CHỨC NĂNG (NON-FUNCTIONAL REQUIREMENTS - NFR)](#5-yêu-cầu-phi-chức-năng-non-functional-requirements---nfr)
    - 5.1 NFR-01: Hiệu năng & Tốc độ xử lý (Performance)
    - 5.2 NFR-02: Độ tin cậy & Toàn vẹn Dữ liệu (Reliability & Data Integrity)
@@ -48,8 +49,9 @@
 6. [MÔ HÌNH DỮ LIỆU & CẤU TRÚC LƯU TRỮ (DATA MODEL & SCHEMA)](#6-mô-hình-dữ-liệu--cấu-trúc-lưu-trữ-data-model--schema)
    - 6.1 Sơ đồ thực thể quan hệ (ERD)
    - 6.2 Chi tiết 5 bảng cơ sở dữ liệu SQLite
+   - 6.3 Cơ sở dữ liệu OFI riêng (ofi_history.db)
 7. [MA TRẬN TRUY XUẤT YÊU CẦU & NGHIỆM THU (TRACEABILITY & ACCEPTANCE CRITERIA)](#7-ma-trận-truy-xuất-yêu-cầu--nghiệm-thu-traceability--acceptance-criteria)
-   - 7.1 Ma trận nghiệm thu theo tính năng (M01 - M07)
+   - 7.1 Ma trận nghiệm thu theo tính năng (M01 - M08)
    - 7.2 Tiêu chuẩn kiểm thử tự động (Pytest Suites)
 8. [PHÊ DUYỆT & KÝ DUYỆT (SIGNOFF)](#8-phê-duyệt--ký-duyệt-signoff)
 
@@ -65,7 +67,7 @@ Tài liệu Đặc tả Yêu cầu Phần mềm (SRS) này định nghĩa đầy
 - **Mục tiêu cốt lõi:** Cung cấp một dashboard phân tích thị trường chứng khoán Mỹ theo phương pháp Top-Down, vận hành cục bộ trên máy tính cá nhân (local-first), giúp người dùng (retail swing trader) đi từ bức tranh vĩ mô/độ rộng S&P 500, qua 11 nhóm ngành GICS, đến danh sách rút gọn các cổ phiếu tiềm năng với bằng chứng kỹ thuật và bối cảnh FA, mở trực tiếp biểu đồ TradingView chỉ với 1-click.
 - **Ranh giới MVP:**
   - *Nằm trong phạm vi:* 503 mã cổ phiếu thuộc S&P 500, 11 quỹ ETF ngành SPDR đại diện 11 nhóm ngành GICS, chỉ số SPY (vốn hóa) và RSP (bình quân), thu thập dữ liệu nguồn mở miễn phí, lưu trữ SQLite, giao diện Streamlit web local.
-  - *Ngoài phạm vi (Out of Scope):* Tự động đặt lệnh giao dịch qua API broker (No Auto-trading), dữ liệu realtime tick/intraday (MVP chỉ dùng EOD / nến ngày), tính năng quản lý tài khoản/danh mục danh nghĩa cá nhân (Portfolio Management).
+  - *Ngoài phạm vi (Out of Scope):* Tự động đặt lệnh giao dịch qua API broker (No Auto-trading), dữ liệu realtime tick/intraday cho phân tích giá (MVP chỉ dùng EOD / nến ngày; ngoại lệ duy nhất là quote Level-1 phục vụ tính OFI — FR-08), tính năng quản lý tài khoản/danh mục danh nghĩa cá nhân (Portfolio Management).
 
 ### 1.3 Thuật ngữ và Viết tắt (Definitions, Acronyms & Abbreviations)
 
@@ -91,7 +93,7 @@ Tài liệu Đặc tả Yêu cầu Phần mềm (SRS) này định nghĩa đầy
 - Tài liệu kiến trúc và hướng dẫn triển khai nội bộ: `README.md`.
 
 ### 1.5 Tổng quan tài liệu (Overview)
-Các phần tiếp theo mô tả chi tiết từ góc nhìn kiến trúc tổng quát (§2), thiết kế giao diện (§3), đặc tả 7 nhóm yêu cầu chức năng từ FR-01 đến FR-07 (§4), các yêu cầu phi chức năng chất lượng cao (§5), sơ đồ cơ sở dữ liệu (§6) và ma trận kiểm thử nghiệm thu (§7).
+Các phần tiếp theo mô tả chi tiết từ góc nhìn kiến trúc tổng quát (§2), thiết kế giao diện (§3), đặc tả 8 nhóm yêu cầu chức năng từ FR-01 đến FR-08 (§4), các yêu cầu phi chức năng chất lượng cao (§5), sơ đồ cơ sở dữ liệu (§6) và ma trận kiểm thử nghiệm thu (§7).
 
 ---
 
@@ -149,7 +151,7 @@ Hệ thống dẫn dắt nhà giao dịch đi qua 4 tầng phễu logic tuần t
 - **Kết nối mạng:** Đường truyền Internet băng thông cơ bản để tải dữ liệu EOD.
 
 ### 2.5 Ràng buộc thiết kế và triển khai (Design & Implementation Constraints)
-1. **Ràng buộc chi phí:** Phải sử dụng 100% thư viện và nguồn dữ liệu mã nguồn mở miễn phí, không yêu cầu bất kỳ API Token trả phí nào.
+1. **Ràng buộc chi phí:** Phải sử dụng 100% thư viện và nguồn dữ liệu mã nguồn mở miễn phí, không yêu cầu bất kỳ API Token trả phí nào (API key miễn phí — ví dụ Alpaca free tier cho FR-08 — được chấp nhận).
 2. **Ràng buộc tiến trình đơn (Concurrency):** File lock (`update.lock`) phải được kích hoạt trong suốt quá trình chạy pipeline cập nhật để tránh trường hợp người dùng bấm cập nhật nhiều lần làm hỏng cơ sở dữ liệu SQLite.
 3. **Ràng buộc cơ sở dữ liệu:** Phải sử dụng SQLite ở chế độ `WAL (Write-Ahead Logging)` và bật `foreign_keys = ON` để đảm bảo giao diện đọc không bao giờ bị khóa bởi tiến trình ghi.
 4. **Ràng buộc xử lý dữ liệu:** Chuẩn hóa ký hiệu đặc biệt (ví dụ mã cổ phiếu có dấu chấm như `BRK.B`, `BF.B` phải được tự động chuyển thành `BRK-B`, `BF-B` để tương thích với Yahoo Finance).
@@ -157,6 +159,7 @@ Hệ thống dẫn dắt nhà giao dịch đi qua 4 tầng phễu logic tuần t
 ### 2.6 Giả định và Phụ thuộc (Assumptions & Dependencies)
 - Cấu trúc trang Wikipedia "List of S&P 500 companies" giữ nguyên bảng HTML chứa các cột Symbol, Security, GICS Sector, GICS Sub-Industry.
 - Yahoo Finance API duy trì tính khả dụng cho việc tải batch nến ngày và thông tin tóm tắt doanh nghiệp.
+- Alpaca Market Data API free tier (feed IEX) duy trì tính khả dụng cho quote Level-1 phục vụ FR-08; khi thiếu key hoặc mất khả dụng, tính năng OFI tự vô hiệu hoá an toàn.
 - Múi giờ chuẩn dữ liệu là múi giờ chuẩn thị trường New York (EST/EDT).
 
 ---
@@ -218,9 +221,17 @@ Giao diện được xây dựng trên nền tảng **Streamlit**, bố cục `w
 - Tỷ lệ bao phủ thực tế, danh sách chi tiết các mã bị thiếu dữ liệu hoặc bị lỗi tải.
 - Tuyên bố 4 nguyên tắc vận hành dữ liệu chi phí 0 đồng.
 
+#### 3.1.7 Trang Dòng tiền OFI (Order Flow Imbalance)
+Trang thuộc nhóm "PHIÊN & SỰ KIỆN" trong sidebar, theo dõi các ứng viên từ snapshot hiện tại:
+- **Tab "Phiên hiện tại" (live):** Khi thị trường mở, hệ thống fetch quote best bid/ask (Alpaca, feed IEX) cho tối đa 30 mã ứng viên (cache 2 phút), tính OFI Level-1 theo công thức Cont-Kukanov-Stoikov (2014) tổng hợp theo phút, hiển thị biểu đồ OFI tích luỹ (top 8 theo |OFI|) và bảng metrics: OFI tích luỹ, z-score block 60 phút, imbalance ratio, số phút dữ liệu, tương quan OFI–Δmid.
+- **Tab "Lịch sử":** Đọc cơ sở dữ liệu OFI riêng (`ofi_history.db`) do workflow GitHub Actions thu thập mỗi 15 phút trong phiên; xem lại đường OFI tích luỹ và bảng tổng kết theo từng phiên.
+- **Minh bạch giới hạn:** Expander phương pháp nêu công thức, cảnh báo feed IEX chỉ ~2–3% khối lượng (OFI là xấp xỉ), horizon dự báo ngắn (giây–phút) và vai trò chỉ là bối cảnh dòng tiền, không phải tín hiệu mua/bán.
+- **Trạng thái cấu hình:** Khi chưa có Alpaca API key, trang hiển thị hướng dẫn thiết lập thay vì lỗi.
+
 ### 3.2 Giao diện phần mềm & Nguồn dữ liệu (Software Interfaces)
 - **Wikipedia S&P 500 Provider:** Giao tiếp qua giao thức HTTP GET, phân tích bảng HTML bằng `BeautifulSoup` và `pandas.read_html` để trích xuất 503 mã cấu thành.
 - **Yahoo Finance Provider:** Giao tiếp thông qua thư viện `yfinance`, sử dụng cơ chế tải đa luồng (multi-threaded download) theo từng lô 100 mã (batch size = 100) đối với nến ngày và `ThreadPoolExecutor(max_workers=10)` đối với thông tin cơ bản FA.
+- **Alpaca Quote Provider (OFI):** Giao tiếp REST qua `requests` tới `https://data.alpaca.markets/v2/stocks/{symbol}/quotes` với header `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY`, feed IEX (free tier, $0/tháng), phân trang qua `next_page_token`, retry khi HTTP 429/5xx và lỗi mạng; HTTP 401/403 (lỗi xác thực — `AlpacaAuthError`) và 4xx khác (`AlpacaQuoteError`) báo lỗi riêng, không retry. Là provider đầu tiên yêu cầu API key; khi thiếu key mọi caller phải phân nhánh an toàn (no-op/hướng dẫn cấu hình), xác thực thất bại thì job OFI trả thất bại và UI hiện cảnh báo riêng.
 - **SQLite Database Interface:** Kết nối qua thư viện chuẩn `sqlite3` của Python, kích hoạt `PRAGMA journal_mode = WAL` và `PRAGMA foreign_keys = ON`.
 
 ### 3.3 Giao diện kết nối nền tảng ngoài (TradingView Integration)
@@ -358,6 +369,14 @@ Khi người dùng bấm nút, trình duyệt sẽ tự động mở biểu đ�
 - **FR-07.2 (Fault Tolerance in Data Fetching):** Nếu một mã cổ phiếu bị lỗi khi tải từ Yahoo Finance (do hủy niêm yết, thay đổi ticker hoặc lỗi mạng cục bộ), hệ thống phải ghi nhận mã đó vào danh sách `missing_symbols` và tiếp tục xử lý các mã còn lại mà không làm sập toàn bộ chu trình cập nhật.
 - **FR-07.3 (Zero-Fictitious Score):** Tuyệt đối không tự bịa đặt hoặc gán giá trị 0 giả định cho các mã bị thiếu dữ liệu lịch sử; các mã này bị loại khỏi tập tính toán độ rộng để không làm sai lệch mẫu thống kê.
 
+### 4.8 FR-08: Động cơ Dòng tiền OFI — Order Flow Imbalance (OFI Engine)
+- **FR-08.1 (OFI Level-1 theo CKS 2014):** Từ chuỗi quote best bid/ask, hệ thống phải tính áp lực mua/bán ròng từng quote update theo công thức Cont-Kukanov-Stoikov: `e_n = 1{P_b(n) ≥ P_b(n-1)}·q_b(n) − 1{P_b(n) ≤ P_b(n-1)}·q_b(n-1) − 1{P_a(n) ≤ P_a(n-1)}·q_a(n) + 1{P_a(n) ≥ P_a(n-1)}·q_a(n-1)`. Xử lý quote: giữ quote một bên sổ rỗng (giá 0 — xử lý như size 0 để bắt event rút sạch một bên) và quote locked (bid = ask); chỉ loại giá âm, cả hai bên rỗng và quote cross (bid > ask). Kết quả tổng hợp theo bucket 60 giây.
+- **FR-08.2 (Metrics OFI):** Mỗi mã phải tính: OFI tích luỹ từ đầu phiên (`integrated_ofi`), imbalance ratio = ΣOFI / Σ|OFI|, z-score của block OFI 60 phút cuối so với phân phối cả phiên (chỉ trả giá trị khi có tối thiểu 10 phút dữ liệu — trước đó là N/A vì z tính trên chính cửa sổ sẽ luôn bằng 0), số phút dữ liệu, và tương quan OFI–Δmid làm chẩn đoán kiểu CKS. Kết quả luôn kèm `methodology_version` và ghi chú giới hạn nguồn dữ liệu tiếng Việt.
+- **FR-08.3 (Universe theo candidates):** Chỉ tính OFI cho tối đa 30 mã ứng viên của snapshot mới nhất (cùng nguồn với trang Ứng viên).
+- **FR-08.4 (Thu thập lịch sử intraday):** Workflow GitHub Actions (`ofi_collector`, mỗi 15 phút trong phiên Mỹ) chạy job `update_ofi`: đọc candidates từ DB chính (chỉ đọc, sắp theo rank), fetch quote tăng dần theo cursor từng mã, tính và lưu OFI phút vào DB riêng `ofi_history.db` (asset `ofi_history.db.gz` trên Release `data-latest`, độc lập với asset DB chính). Job idempotent (PK `symbol, ts`), fetch buffer 3 phút trước cursor để tính lại trọn phút đang dở nhưng chỉ lưu bucket từ cursor trở đi; cursor luôn kẹp theo đầu phiên hiện tại (không ghép event OFI qua ranh giới phiên, không fetch lại dữ liệu phiên cũ); timestamp lưu chuẩn ISO-8601-Z. Job tự no-op khi thiếu API key, ngoài phiên (trừ after_hours để chốt nốt dữ liệu) hoặc không có candidates; thất bại xác thực Alpaca (401/403) làm job trả `success: False` để workflow báo đỏ; nếu đã quá 15 phút đầu phiên (regular) mà không thu thập được dữ liệu của bất kỳ symbol nào, job cũng đánh dấu thất bại (degraded) thay vì xanh vô nghĩa.
+- **FR-08.5 (Graceful degradation):** Khi chưa cấu hình Alpaca API key, trang UI hiển thị hướng dẫn cấu hình; pipeline chính và toàn bộ tính năng khác hoạt động bình thường không phụ thuộc OFI. Key sai/thiếu quyền (401/403) hiển thị cảnh báo lỗi xác thực riêng, không lẫn với trạng thái "chưa có dữ liệu".
+- **Ranh giới FR-08:** OFI từ feed IEX là xấp xỉ của dòng tiền toàn thị trường; chỉ dùng làm bối cảnh phiên, không tích hợp vào scoring/ranking ứng viên (để phase sau khi có lịch sử kiểm chứng). Multi-level OFI (PCA) và cross-asset OFI (LASSO) nằm ngoài phạm vi MVP.
+
 ---
 
 ## 5. YÊU CẦU PHI CHỨC NĂNG (NON-FUNCTIONAL REQUIREMENTS - NFR)
@@ -376,6 +395,7 @@ Khi người dùng bấm nút, trình duyệt sẽ tự động mở biểu đ�
 
 ### 5.3 NFR-03: Chi phí dữ liệu & Bản quyền (Cost & Licensing)
 - **Chi phí vận hành định kỳ:** Đúng **0 VNĐ / 0 USD**. Tuyệt đối không phát sinh hóa đơn API hàng tháng từ bên thứ ba.
+- **Chi phí Alpaca (FR-08):** Free tier **0 USD/tháng**, yêu cầu API key miễn phí (feed IEX); job và UI tự phân nhánh an toàn khi thiếu key.
 - **Tuân thủ bản quyền dữ liệu:** Sử dụng các gói phân tích dữ liệu mở và tuân thủ các quy định khai thác dữ liệu nghiên cứu cá nhân.
 
 ### 5.4 NFR-04: Tính khả dụng & Trải nghiệm Người dùng (Usability)
@@ -386,7 +406,7 @@ Khi người dùng bấm nút, trình duyệt sẽ tự động mở biểu đ�
 ### 5.5 NFR-05: Khả năng bảo trì & Mở rộng (Maintainability & Extensibility)
 - **Kiến trúc Module hóa:** Phân tách rành mạch thành 6 tầng độc lập:
   - `config/`: Tham số ngưỡng, ánh xạ ngành.
-  - `providers/`: Adapter thu thập dữ liệu kế thừa từ `BaseUniverseProvider` và `BaseMarketDataProvider`.
+  - `providers/`: Adapter thu thập dữ liệu kế thừa từ `BaseUniverseProvider`, `BaseMarketDataProvider` và `BaseQuoteProvider`.
   - `storage/`: Quản lý SQLite, Lock và Repository.
   - `analytics/`: Động cơ toán học định lượng và luật sàng lọc.
   - `jobs/`: Pipeline điều phối tác vụ.
@@ -518,11 +538,28 @@ Lưu danh sách chi tiết các cổ phiếu được sàng lọc trong từng s
   - `idx_candidate_snapshot_id` trên `(snapshot_id)`.
   - `idx_candidate_symbol` trên `(symbol)`.
 
+### 6.3 Cơ sở dữ liệu OFI riêng (ofi_history.db)
+File SQLite **riêng** (`data/ofi_history.db`, cấu hình qua `OFI_DB_PATH`) tách khỏi DB chính vì DB chính chỉ có một writer duy nhất (workflow pipeline 4 lần/ngày upload asset `market_radar.db.gz` bằng `--clobber`); job OFI chạy intraday nếu ghi chung sẽ hai workflow ghi đè asset của nhau. Asset nén `ofi_history.db.gz` được upload lên cùng Release `data-latest` và `start.sh` tải về khi deploy.
+
+#### 6.3.1 Bảng `ofi_minute_bars` (OFI phút theo phiên)
+- `symbol` (TEXT), `ts` (TEXT, bucket 60 giây, ISO-8601 UTC) — **Composite Primary Key `(symbol, ts)`**.
+- `session_date` (TEXT): ngày phiên ET (`YYYY-MM-DD`).
+- `ofi` (REAL): tổng e_n trong phút.
+- `n_updates` (INTEGER): số quote update trong phút.
+- `spread_avg` / `bid_size_last` / `ask_size_last` / `mid_first` / `mid_last` (REAL): phụ trợ.
+- `source` (TEXT): nguồn quote (`iex`).
+- **Chỉ mục:** `idx_ofi_minute_session` trên `(session_date)`; `idx_ofi_minute_symbol_session` trên `(symbol, session_date)`.
+
+#### 6.3.2 Bảng `ofi_sync_cursor` (Con trỏ thu thập tăng dần)
+- `symbol` (TEXT, PRIMARY KEY).
+- `last_quote_ts` (TEXT): bucket cuối đã lưu — lần fetch sau lùi buffer 3 phút để tính lại trọn phút đang dở.
+- `updated_at` (TEXT).
+
 ---
 
 ## 7. MA TRẬN TRUY XUẤT YÊU CẦU & NGHIỆM THU (TRACEABILITY & ACCEPTANCE CRITERIA)
 
-### 7.1 Ma trận nghiệm thu theo tính năng (M01 - M07)
+### 7.1 Ma trận nghiệm thu theo tính năng (M01 - M08)
 
 | Mã | Tính năng | Yêu cầu liên kết | Tiêu chí chấp nhận (Acceptance Criteria) | Kết quả kiểm chứng |
 |---|---|---|---|---|
@@ -533,9 +570,10 @@ Lưu danh sách chi tiết các cổ phiếu được sàng lọc trong từng s
 | **M05** | Chi tiết cổ phiếu & TradingView | FR-05.1, FR-05.2, FR-05.3, FR-04.3, FR-06.3 | - Thẻ hiển thị rõ các gạch đầu dòng bằng chứng TA.<br>- Hiển thị lịch Earnings (hoặc nhãn chưa xác minh).<br>- Có ngoại lệ vốn cho Ngân hàng/Tài chính.<br>- Nút bấm TradingView mở đúng ticker. | **ĐẠT (PASS)** |
 | **M06** | Thay đổi và lịch sử | FR-06.1, FR-06.2, FR-06.3 | - Lưu trữ snapshot bất biến trong SQLite.<br>- So sánh delta rõ ràng: mã mới vào, mã rời đi, biến động thứ hạng ngành.<br>- Hỗ trợ tải CSV danh sách ứng viên. | **ĐẠT (PASS)** |
 | **M07** | Chất lượng dữ liệu & 0đ | FR-01.1, FR-01.2, FR-01.3, FR-01.4, FR-07.1, FR-07.2, FR-07.3 | - Tải thành công từ Wikipedia và Yahoo Finance không tốn phí.<br>- Chuẩn hóa đúng mã (BRK.B -> BRK-B).<br>- Độ bao phủ $\ge 95\%$.<br>- ProcessLock ngăn chặn xung đột tiến trình cập nhật. | **ĐẠT (PASS)** |
+| **M08** | Dòng tiền OFI (Order Flow Imbalance) | FR-08.1, FR-08.2, FR-08.3, FR-08.4, FR-08.5 | - e_n tính đúng theo công thức CKS trên các case: size đổi cùng giá, bid/ask nhảy mức giá mới, hủy toàn bộ size, một bên sổ rỗng (giá 0), quote locked; quote cross/giá âm bị loại (kiểm chứng bằng unit test tính tay).<br>- Bucket 60 giây, z-score block 60 phút (N/A khi <10 phút dữ liệu), imbalance ratio đúng.<br>- Job idempotent: chạy lại không nhân đôi bản ghi; seam cursor không ghi đè phút hoàn chỉnh bằng bản thiếu event; cursor kẹp theo đầu phiên.<br>- Thiếu API key / ngoài phiên / không candidates → no-op có thông báo; key sai (401/403) → job thất bại rõ ràng, UI hiện banner lỗi xác thực riêng.<br>- Quá 15 phút đầu phiên mà 0 symbol có dữ liệu → job báo degraded (thất bại).<br>- DB chính không bị ảnh hưởng. | **ĐẠT (PASS)** |
 
 ### 7.2 Tiêu chuẩn kiểm thử tự động (Pytest Suites)
-Hệ thống tích hợp bộ kiểm thử tự động gồm 11 test cases thuộc 4 file kiểm thử, đạt tỷ lệ vượt qua **100% (11/11 Passed)**:
+Hệ thống tích hợp bộ kiểm thử tự động pytest (chạy toàn bộ bằng `python -m pytest tests/`). Các suite cốt lõi gồm:
 1. `tests/test_providers.py`:
    - `test_clean_symbol`: Kiểm tra chuẩn hóa mã cổ phiếu (chữ hoa, khoảng trắng, chuyển dấu chấm thành gạch ngang).
    - `test_yfinance_provider_download`: Kiểm tra tải thử nến ngày cho SPY, đảm bảo dữ liệu đầy đủ OHLCV.
@@ -551,6 +589,11 @@ Hệ thống tích hợp bộ kiểm thử tự động gồm 11 test cases thu�
    - `test_save_and_retrieve_snapshot_diff`: Kiểm tra lưu trữ snapshot và tính toán delta giữa 2 snapshot liên tiếp.
 4. `tests/test_pipeline_e2e.py`:
    - `test_e2e_pipeline_run`: Kiểm tra tích hợp toàn diện chu trình cập nhật từ kết nối mạng, tính toán định lượng đến ghi nhận vào cơ sở dữ liệu SQLite thực tế.
+5. Suite OFI (Order Flow Imbalance):
+   - `tests/test_order_flow_imbalance.py`: Kiểm chứng công thức CKS bằng giá trị tính tay (size đổi cùng giá, bid/ask nhảy mức giá mới, hủy toàn bộ size), lọc quote cross/giá 0, bucket 60 giây, z-score block (chiều dấu, đối xứng, suy biến std=0), pipeline end-to-end.
+   - `tests/test_alpaca_provider.py`: Mock HTTP — phân trang `next_page_token`, retry 429, nuốt lỗi từng symbol, sắp xếp/dedup timestamp, cửa sổ phiên EST/EDT, no-op trước giờ mở cửa.
+   - `tests/test_ofi_store.py`: Roundtrip lưu/đọc OFI phút (idempotent), cursor, tổng kết phiên, xử lý DB rỗng.
+   - `tests/test_update_ofi_job.py`: Job no-op khi thiếu key/ngoài phiên/không candidates; happy path lưu đúng; seam cursor idempotent giữa các lần chạy.
 
 ---
 
